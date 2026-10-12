@@ -5,11 +5,14 @@ require_once PHPWG_ROOT_PATH.'include/common.inc.php';
 check_status(ACCESS_GUEST);
 if (!isset($pwg_loaded_plugins['yudao_design'])) { http_response_code(404); exit; }
 try {
+  header('Cache-Control: private, no-store');
   $version_id = $_GET['version_id'] ?? '';
   $asset_id = $_GET['asset_id'] ?? '';
-  list($asset, $path) = yudao_design_resolve_asset($version_id, $asset_id);
+  list($asset, $path, $visibility) = yudao_design_resolve_asset($version_id, $asset_id);
+  yudao_design_cache_headers($visibility);
   $size = filesize($path); $start = 0; $end = $size-1;
   $etag = '"'.$asset['sha256'].'"';
+  header('ETag: '.$etag);
   if (($_SERVER['HTTP_IF_NONE_MATCH'] ?? '') === $etag && !isset($_SERVER['HTTP_RANGE'])) { http_response_code(304); exit; }
   if (isset($_SERVER['HTTP_RANGE'])) {
     if (!preg_match('/\Abytes=(\d*)-(\d*)\z/', $_SERVER['HTTP_RANGE'], $m) || ($m[1] === '' && $m[2] === '')) {
@@ -24,7 +27,7 @@ try {
   header('Content-Type: '.$asset['mime']);
   header('X-Content-Type-Options: nosniff');
   header('Content-Disposition: '.($attachment ? 'attachment' : 'inline').'; filename="download.'.pathinfo($asset['file'], PATHINFO_EXTENSION).'"; filename*=UTF-8\'\''.rawurlencode($asset['name']));
-  header('Accept-Ranges: bytes'); header('ETag: '.$etag); header('Cache-Control: public, max-age=3600');
+  header('Accept-Ranges: bytes'); header('ETag: '.$etag);
   header('Content-Length: '.($end-$start+1));
   session_write_close();
   if ($_SERVER['REQUEST_METHOD'] === 'HEAD') exit;

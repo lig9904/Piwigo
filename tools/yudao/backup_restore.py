@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Project-only consistent NAS backup and isolated restoration; secrets stay on NAS."""
-import argparse, fcntl, hashlib, json, os, pathlib, shutil, subprocess, tarfile, time, urllib.request, urllib.parse, uuid, shlex
+import argparse, fcntl, hashlib, http.cookiejar, json, os, pathlib, shutil, subprocess, tarfile, time, urllib.request, urllib.parse, uuid, shlex
 
 def run(*args, **kw):
     return subprocess.run(args, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kw).stdout
@@ -14,8 +14,8 @@ def sha(path):
         for b in iter(lambda:f.read(1024*1024),b''): h.update(b)
     return h.hexdigest()
 
-def api(base):
-    with urllib.request.urlopen(base+'/ws.php?format=json&method=yudaoDesign.projects.list', timeout=30) as r:
+def api(base, opener=None):
+    with (opener.open if opener else urllib.request.urlopen)(base+'/ws.php?format=json&method=yudaoDesign.projects.list', timeout=30) as r:
         value=json.load(r)
     if value.get('stat')!='ok': raise RuntimeError('Public project API failed')
     return value['result']['projects']
@@ -29,12 +29,12 @@ def wait_app(name, base):
             time.sleep(1)
     raise RuntimeError('Restored app readiness timeout')
 
-def verify(projects, materials):
+def verify(projects, materials, opener=None):
     checks=[]
     for p in projects:
         for v in p['versions']:
             for a in v['assets']:
-                with urllib.request.urlopen(a['url'],timeout=60) as r:
+                with (opener.open if opener else urllib.request.urlopen)(a['url'],timeout=60) as r:
                     h=hashlib.sha256(); size=0
                     for b in iter(lambda:r.read(1024*1024),b''): h.update(b); size+=len(b)
                 if h.hexdigest()!=a['sha256'] or size!=a['bytes']: raise RuntimeError('Original asset mismatch '+a['id'])
@@ -74,16 +74,24 @@ def restore(backup, image, db_image, env, scratch, baseline):
         wait_app(app,base)
         php='$_SERVER["REMOTE_ADDR"]="127.0.0.1"; define("PHPWG_ROOT_PATH","../../"); define("YUDAO_DESIGN_ENTRY",true); require "../../include/common.inc.php"; require_once "include/library.php"; yudao_design_schema();'
         run('docker','exec','-w','/var/www/html/plugins/yudao_design',app,'php','-r',php)
-        projects=api(base)
+        # Use the archived native admin account for read-only restored HTTP checks.
+        # Login-only projects must be included; credentials never leave this process.
+        with tarfile.open(backup/'runtime.tar.gz') as t:
+            credentials=json.load(t.extractfile('admin-access.json'))
+        opener=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+        login=urllib.parse.urlencode({'method':'pwg.session.login','username':credentials['username'],'password':credentials['password']}).encode()
+        with opener.open(base+'/ws.php?format=json',data=login,timeout=30) as r:
+            if json.load(r).get('stat')!='ok': raise RuntimeError('Restored administrator login failed')
+        projects=api(base,opener)
         def stable(ps):
             # Original immutable fields and presentation settings, excluding URL host and derived previews.
-            return [{k:p[k] for k in ['id','title','region','created_at','current_version_id','cover_asset_id']} | {'interactive_models':p['interactive_models'],'versions':[{k:v[k] for k in ['id','label','created_at','description']} | {'assets':[{k:a[k] for k in ['id','name','kind','role','bytes','sha256']} | {'caption':a.get('caption','')} for a in v['assets']]} for v in p['versions']]} for p in ps]
+            return [{k:p[k] for k in ['id','title','region','created_at','current_version_id','cover_asset_id']} | {'visibility':p.get('visibility','public'),'interactive_models':p['interactive_models'],'versions':[{k:v[k] for k in ['id','label','created_at','description']} | {'assets':[{k:a[k] for k in ['id','name','kind','role','bytes','sha256']} | {'caption':a.get('caption','')} for a in v['assets']]} for v in p['versions']]} for p in ps]
         if stable(projects)!=stable(baseline): raise RuntimeError('Restored project metadata mismatch')
-        asset_checks=verify(projects,materials)
+        asset_checks=verify(projects,materials,opener)
         interactive=[]
         for p in projects:
             for m in p['interactive_models']:
-                with urllib.request.urlopen(base+'/'+urllib.parse.quote(m['url'],safe='/?=&%'),timeout=30) as r:
+                with opener.open(base+'/'+urllib.parse.quote(m['url'],safe='/?=&%'),timeout=30) as r:
                     data=r.read()
                     if b'<html' not in data.lower(): raise RuntimeError('Interactive HTML missing')
                     interactive.append({'key':m['key'],'sha256':hashlib.sha256(data).hexdigest()})
@@ -145,7 +153,7 @@ def main():
         try:
             run('docker','stop','--time','30',args.app)
             network=next(iter(state['NetworkSettings']['Networks']))
-            php='$_SERVER["REMOTE_ADDR"]="127.0.0.1"; $_SERVER["HTTP_HOST"]="192.168.200.20:8081"; define("PHPWG_ROOT_PATH","../../"); define("YUDAO_DESIGN_ENTRY",true); require "../../include/common.inc.php"; require_once "include/library.php"; echo json_encode(yudao_design_list_projects());'
+            php='$_SERVER["REMOTE_ADDR"]="127.0.0.1"; $_SERVER["HTTP_HOST"]="192.168.200.20:8081"; define("PHPWG_ROOT_PATH","../../"); define("YUDAO_DESIGN_ENTRY",true); require "../../include/common.inc.php"; require_once "include/library.php"; $user=build_user($conf["webmaster_id"],true); echo json_encode(yudao_design_list_projects());'
             baseline=json.loads(run('docker','run','--rm','--network',network,'--entrypoint','php','-w','/var/www/html/plugins/yudao_design','-e','YUDAO_STORAGE_ROOT=/var/lib/yudao-design','-v',str(args.runtime/'html')+':/var/www/html','-v',str(args.materials)+':/var/lib/yudao-design',state['Image'],'-r',php))
             (dest/'projects.json').write_text(json.dumps(baseline,ensure_ascii=False,indent=2))
             with open(dest/'database.sql','wb') as f:

@@ -80,7 +80,7 @@ function yudao_design_thumbnail($asset, $source, $size)
 function yudao_design_serve_thumbnail($version_id, $asset_id, $size)
 {
   if (!in_array((string)$size, array('400', '800'), true)) throw new YudaoDesignError('预览尺寸仅支持 400 或 800。', 400);
-  list($asset, $source) = yudao_design_resolve_asset($version_id, $asset_id);
+  list($asset, $source, $visibility) = yudao_design_resolve_asset($version_id, $asset_id);
   if ($asset['kind'] !== 'image') throw new YudaoDesignError('仅图片支持缩略预览。', 400);
   session_write_close();
   $preview = yudao_design_thumbnail($asset, $source, (int)$size);
@@ -93,7 +93,7 @@ function yudao_design_serve_thumbnail($version_id, $asset_id, $size)
   }
   $etag = '"'.$asset['sha256'].'-'.$size.'-v1"';
   header('Content-Type: '.$preview['mime']); header('X-Content-Type-Options: nosniff');
-  header('Cache-Control: public, max-age=86400'); header('ETag: '.$etag);
+  yudao_design_cache_headers($visibility); header('ETag: '.$etag);
   if (($_SERVER['HTTP_IF_NONE_MATCH'] ?? '') === $etag) { http_response_code(304); return; }
   header('Content-Length: '.filesize($preview['path']));
   if ($_SERVER['REQUEST_METHOD'] !== 'HEAD') readfile($preview['path']);

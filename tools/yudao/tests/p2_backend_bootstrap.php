@@ -3,6 +3,8 @@ if (!in_array(PHP_SAPI, array('cli-server', 'cli'), true) || getenv('YUDAO_P2_TE
 if (!defined('ACCESS_GUEST')) define('ACCESS_GUEST', 0);
 $prefixeTable = 'p2_';
 $conf = array('db_host'=>'database','db_user'=>getenv('PIWIGO_DB_USER') ?: 'piwigo','db_password'=>getenv('PIWIGO_DB_PASSWORD'),'db_base'=>'yudao_p2_isolated');
+$conf['webmaster_id'] = 1;
+function build_user($id, $cache = true) { return array('id'=>$id, 'status'=>'webmaster'); }
 $pwg_loaded_plugins = array('yudao_design'=>true);
 function add_event_handler(...$args) {}
 function check_status($status) {}

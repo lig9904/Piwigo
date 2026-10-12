@@ -181,3 +181,11 @@
 #yudao-design-app .yd-section[id]{scroll-margin-top:24px}
 #yudao-design-app .yd-current-heading{border-top:1px solid var(--yd-line);padding-top:24px}
 @media(max-width:680px){#yudao-design-app .yd-project-resources{padding:18px}#yudao-design-app .yd-resource-nav,#yudao-design-app .yd-interactive-grid{grid-template-columns:1fr}#yudao-design-app .yd-version-actions .yd-button{white-space:normal;max-width:100%}#yudao-design-app .yd-model-shortcut{overflow-wrap:anywhere}#yudao-design-app .yd-interactive-card{padding:18px}#yudao-design-app .yd-file-heading .yd-meta{font-size:11px}}
+
+#yudao-design-app .yd-access-panel{background:#fff;border:1px solid var(--yd-line);border-radius:8px;padding:22px;margin:0 0 30px;display:flex;gap:24px;justify-content:space-between;align-items:center}
+#yudao-design-app .yd-access-panel h2{font-size:18px}
+#yudao-design-app .yd-access-panel p{font-size:13px;color:var(--yd-muted);margin-top:8px}
+#yudao-design-app .yd-access-controls{display:flex;align-items:flex-end;gap:12px;flex-shrink:0}
+#yudao-design-app .yd-access-controls label{font-size:12px}
+#yudao-design-app .yd-access-controls select{display:block;margin-top:5px;max-width:100%}
+@media(max-width:760px){#yudao-design-app .yd-access-panel{display:block}#yudao-design-app .yd-access-controls{margin-top:18px;flex-wrap:wrap}}

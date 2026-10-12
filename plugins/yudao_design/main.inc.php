@@ -1,7 +1,7 @@
 <?php
 /*
 Plugin Name: 渔岛设计资料
-Version: 1.2.0
+Version: 1.3.0
 Description: 项目版本统一上传、图片与三维模型预览、PDF 查看及 CAD 下载。
 Author: Yudao
 Has Settings: true
@@ -27,7 +27,7 @@ function yudao_design_register_methods($arr)
   ), '一次提交 files[] 和项目版本信息，全部保存成功后发布', '', array('admin_only' => true, 'post_only' => true));
   $service->addMethod('yudaoDesign.projects.configure', 'yudao_design_ws_configure', array(
     'project_id' => array(), 'current_version_id' => array('default' => null),
-    'cover_asset_id' => array('default' => null), 'interactive_models' => array('default' => null), 'pwg_token' => array(),
+    'cover_asset_id' => array('default' => null), 'interactive_models' => array('default' => null), 'visibility' => array('default' => null), 'pwg_token' => array(),
   ), '设置项目当前版本、封面与交互模型；缺省字段保持原值', '', array('admin_only' => true, 'post_only' => true));
   $service->addMethod('yudaoDesign.projects.annotate', 'yudao_design_ws_annotate', array(
     'project_id' => array(), 'captions' => array('default' => '{}'), 'pwg_token' => array(),
@@ -51,6 +51,7 @@ function yudao_design_check_request_size()
 
 function yudao_design_ws_list($params, $service)
 {
+  header('Cache-Control: private, no-store'); header('Vary: Cookie');
   check_status(ACCESS_GUEST);
   try { return array('projects' => yudao_design_list_projects(), 'limits' => yudao_design_limits()); }
   catch (Throwable $e) { return new PwgError(500, '项目库暂时无法读取，请确认插件已启用。'); }
@@ -58,6 +59,7 @@ function yudao_design_ws_list($params, $service)
 
 function yudao_design_ws_get($params, $service)
 {
+  header('Cache-Control: private, no-store'); header('Vary: Cookie');
   check_status(ACCESS_GUEST);
   try { return array('project' => yudao_design_get_project(stripslashes($params['project_id'])), 'limits' => yudao_design_limits()); }
   catch (YudaoDesignError $e) { return new PwgError($e->getCode(), $e->getMessage()); }
