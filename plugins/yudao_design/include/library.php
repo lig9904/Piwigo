@@ -224,7 +224,7 @@ function yudao_design_import($params, $files)
   $root = yudao_design_storage();
   $id = yudao_design_id();
   $stage = $root.'/.stage-'.$id; $final = $root.'/'.$id;
-  if (!mkdir($stage, 0750)) throw new YudaoDesignError('资料目录无法写入，请检查存储空间。', 503);
+  if (!@mkdir($stage, 0750)) throw new YudaoDesignError('资料目录无法写入，请检查存储空间。', 503);
   $lock = null; $committed = false; $started = false;
   try {
     foreach ($assets as &$asset) {

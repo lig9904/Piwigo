@@ -19,5 +19,6 @@ fi
 
 mkdir -p "${YUDAO_STORAGE_ROOT:-/var/lib/yudao-design}"
 chown www-data:www-data "${YUDAO_STORAGE_ROOT:-/var/lib/yudao-design}"
+chmod 0750 "${YUDAO_STORAGE_ROOT:-/var/lib/yudao-design}"
 
 exec "$@"
