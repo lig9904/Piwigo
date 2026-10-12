@@ -87,3 +87,13 @@ python3 tools/yudao/switch_release.py yudao-piwigo:1.2.0-REVISION
 OCI 标签记录提交和发布版本；`plugins/yudao_design/release.json` 显示实际提供插件的镜像身份。切换脚本只替换登记项目 `yudao-piwigo` 的应用镜像，保留端口、数据库、目录和其他服务；启动完成后运行增量 schema 并核对正在运行的镜像 ID。失败时恢复原 Compose，等待原 API 并核对镜像，写入 `rollbackVerified` 回执。凭证不写到回执。
 
 回滚使用相同脚本选择已保留旧镜像。1.2 新表是增量结构，旧插件仍可读原数据库；若未来涉及破坏性迁移，须先隔离验证备份恢复，不能直接套用代码回滚。Piwigo 核心文件仍保留持久卷里的原版本，更新镜像只更新此插件；核心版本升级须使用原生 Piwigo 升级流程并单独验收，不能把镜像标签当作核心已升级的证据。
+
+### 1.3 项目权限发布
+
+现有项目保持公开；增量创建project_access表，配置接口visibility选择public或login。先本机原生账号/匿名/正常用户验证，再完整NAS备份与旧、新镜像隔离恢复后切换。发布命令可传第4个参数版本，旧3参数调用仍默认1.2.0：
+
+```sh
+sh tools/yudao/deploy_p2.sh COMMIT SOURCE.zip SHA256 1.3.0
+```
+
+请从公开release.json核对1.3.0及实际提交。正式切换不将任一已有项目改为需登录。管理员打开后台项目即可操作权限开关。私有项目将从游客list排除，所以全量恢复验收通过备份内原生管理员登录进行，不把游客清单当全量备份；备份保留visibility。已有需登录项目时，不可回滚到不支持权限的1.2插件来保证访问限制。

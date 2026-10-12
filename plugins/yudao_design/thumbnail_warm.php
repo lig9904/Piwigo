@@ -7,6 +7,8 @@ $_SERVER['HTTP_HOST'] = 'localhost';
 define('PHPWG_ROOT_PATH', './');
 define('YUDAO_DESIGN_ENTRY', true);
 require_once PHPWG_ROOT_PATH.'include/common.inc.php';
+// Local CLI maintenance must also warm login-only projects; HTTP cannot enter here.
+$user = build_user($conf['webmaster_id'], true);
 if (!isset($pwg_loaded_plugins['yudao_design'])) { fwrite(STDERR, "Plugin not enabled\n"); exit(1); }
 require_once __DIR__.'/include/thumbnail.php';
 $counts = array('images' => 0, 'generated' => 0, 'hits' => 0, 'fallbacks' => 0);

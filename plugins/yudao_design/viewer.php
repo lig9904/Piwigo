@@ -7,6 +7,7 @@ check_status(ACCESS_GUEST);
 if (!isset($pwg_loaded_plugins['yudao_design'])) { http_response_code(404); exit; }
 
 try {
+  header('Cache-Control: private, no-store');
   $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
   if (!in_array($method, array('GET', 'HEAD'), true)) {
     header('Allow: GET, HEAD');
@@ -21,6 +22,8 @@ try {
     if ($part === '' || $part === '.' || $part === '..' || $part[0] === '.')
       throw new YudaoDesignError('互动模型路径无效。', 400);
   }
+  if (count($parts) < 3 || $parts[0] !== 'model') throw new YudaoDesignError('互动模型路径无效。', 404);
+  $visibility = yudao_design_require_viewer_access($parts[1]);
   $mime = array(
     'html' => 'text/html; charset=utf-8', 'htm' => 'text/html; charset=utf-8',
     'js' => 'application/javascript; charset=utf-8', 'mjs' => 'application/javascript; charset=utf-8',
@@ -41,13 +44,14 @@ try {
   if (!$root || strpos($root, $storage.DIRECTORY_SEPARATOR) !== 0)
     throw new YudaoDesignError('互动模型尚未发布。', 404);
   $path = realpath($root.'/'.$relative);
-  if (!$path || strpos($path, $root.DIRECTORY_SEPARATOR) !== 0 || !is_file($path) || !is_readable($path))
+  $model_root = $root.'/model/'.$parts[1];
+  if (realpath($model_root) !== $model_root || !$path || strpos($path, $model_root.DIRECTORY_SEPARATOR) !== 0 || !is_file($path) || !is_readable($path))
     throw new YudaoDesignError('互动模型文件不存在。', 404);
   $size = filesize($path);
   $etag = '"'.hash_file('sha256', $path).'"';
   header('Content-Type: '.$mime[$extension]);
   header('X-Content-Type-Options: nosniff');
-  header('Cache-Control: public, max-age=3600');
+  yudao_design_cache_headers($visibility);
   header('ETag: '.$etag);
   header('Accept-Ranges: bytes');
   if (($_SERVER['HTTP_IF_NONE_MATCH'] ?? '') === $etag && !isset($_SERVER['HTTP_RANGE'])) {

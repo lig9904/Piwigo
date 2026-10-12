@@ -2,15 +2,17 @@
 # Run on this fnOS NAS as root after uploading the commit archive to XMT.
 set -eu
 [ "$(id -u)" = 0 ] || { echo 'Run on NAS as root'; exit 1; }
-[ "$#" = 3 ] || { echo 'Usage: deploy_p2.sh COMMIT ARCHIVE.zip EXPECTED_SHA256'; exit 1; }
+[ "$#" = 3 ] || [ "$#" = 4 ] || { echo 'Usage: deploy_p2.sh COMMIT ARCHIVE.zip EXPECTED_SHA256 [RELEASE]'; exit 1; }
 revision=$1
 archive=$2
 expected=$3
+version=${4:-1.2.0}
+printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo 'Invalid release version'; exit 1; }
 case "$revision" in *[!0-9a-f]*|'') echo 'Invalid revision'; exit 1;; esac
 [ "${#revision}" = 40 ] || { echo 'Use full 40-character git revision'; exit 1; }
 actual=$(sha256sum "$archive" | cut -d' ' -f1)
 [ "$actual" = "$expected" ] || { echo 'Source checksum mismatch'; exit 1; }
-release="1.2.0-$(printf '%s' "$revision" | cut -c1-12)"
+release="$version-$(printf '%s' "$revision" | cut -c1-12)"
 image="yudao-piwigo:$release"
 runtime=/vol1/1000/yudao-piwigo
 source="$runtime/releases/$release/source"
@@ -23,7 +25,7 @@ chmod 700 "$runtime/releases" "$runtime/releases/$release"
 unzip -q "$archive" -d "$source"
 python3 "$source/tools/yudao/backup_restore.py" "$backup" --verify-restore
 cp "$backup/restore-results.json" "$backup/restore-before-results.json"
-docker build --build-arg YUDAO_RELEASE=1.2.0 --build-arg "YUDAO_SOURCE_REVISION=$revision" -f "$source/deploy/yudao/Dockerfile" -t "$image" "$source"
+docker build --build-arg "YUDAO_RELEASE=$version" --build-arg "YUDAO_SOURCE_REVISION=$revision" -f "$source/deploy/yudao/Dockerfile" -t "$image" "$source"
 # Verify the new plugin against a restored copy before changing the live app.
 python3 "$source/tools/yudao/backup_restore.py" "$backup" --restore-only --restore-image "$image"
 cp "$backup/restore-results.json" "$backup/restore-upgrade-results.json"
