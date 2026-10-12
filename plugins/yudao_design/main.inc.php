@@ -1,7 +1,7 @@
 <?php
 /*
 Plugin Name: 渔岛设计资料
-Version: 1.1.0
+Version: 1.2.0
 Description: 项目版本统一上传、图片与三维模型预览、PDF 查看及 CAD 下载。
 Author: Yudao
 Has Settings: true
@@ -29,13 +29,16 @@ function yudao_design_register_methods($arr)
     'project_id' => array(), 'current_version_id' => array('default' => null),
     'cover_asset_id' => array('default' => null), 'interactive_models' => array('default' => null), 'pwg_token' => array(),
   ), '设置项目当前版本、封面与交互模型；缺省字段保持原值', '', array('admin_only' => true, 'post_only' => true));
+  $service->addMethod('yudaoDesign.projects.annotate', 'yudao_design_ws_annotate', array(
+    'project_id' => array(), 'captions' => array('default' => '{}'), 'pwg_token' => array(),
+  ), '保存项目图片说明，缺省保留、空字符串删除', '', array('admin_only' => true, 'post_only' => true));
 }
 
 function yudao_design_check_request_size()
 {
   if (defined('IN_WS') && isset($_GET['method']) && $_GET['method'] === 'yudaoDesign.projects.import')
   {
-    $php_max = yudao_design_ini_bytes(ini_get('post_max_size'));
+    $php_max = yudao_design_limits()['request_max_bytes'];
     if ($php_max > 0 && (int)($_SERVER['CONTENT_LENGTH'] ?? 0) > $php_max)
     {
       http_response_code(413);
@@ -56,7 +59,7 @@ function yudao_design_ws_list($params, $service)
 function yudao_design_ws_get($params, $service)
 {
   check_status(ACCESS_GUEST);
-  try { return array('project' => yudao_design_get_project(stripslashes($params['project_id']))); }
+  try { return array('project' => yudao_design_get_project(stripslashes($params['project_id'])), 'limits' => yudao_design_limits()); }
   catch (YudaoDesignError $e) { return new PwgError($e->getCode(), $e->getMessage()); }
   catch (Throwable $e) { return new PwgError(500, '项目暂时无法读取。'); }
 }
@@ -90,5 +93,21 @@ function yudao_design_ws_configure($params, $service)
   catch (Throwable $e) {
     error_log('Yudao design settings failed: '.get_class($e));
     return new PwgError(500, '展示设置暂时无法保存，请稍后重试。');
+  }
+}
+
+function yudao_design_ws_annotate($params, $service)
+{
+  if (!is_admin() || !hash_equals(get_pwg_token(), (string)($params['pwg_token'] ?? '')))
+    return new PwgError(403, '请登录管理员账户后保存图片说明。');
+  try {
+    foreach ($params as &$value) { if (is_string($value)) $value = stripslashes($value); }
+    unset($value);
+    return yudao_design_annotate($params);
+  }
+  catch (YudaoDesignError $e) { return new PwgError($e->getCode(), $e->getMessage()); }
+  catch (Throwable $e) {
+    error_log('Yudao caption save failed: '.get_class($e));
+    return new PwgError(500, '图片说明暂时无法保存，请稍后重试。');
   }
 }

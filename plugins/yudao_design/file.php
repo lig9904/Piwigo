@@ -7,16 +7,7 @@ if (!isset($pwg_loaded_plugins['yudao_design'])) { http_response_code(404); exit
 try {
   $version_id = $_GET['version_id'] ?? '';
   $asset_id = $_GET['asset_id'] ?? '';
-  if (!yudao_design_valid_id($version_id) || !yudao_design_valid_id($asset_id)) throw new YudaoDesignError('文件编号无效。', 400);
-  $row = yudao_design_query('SELECT document FROM '.yudao_design_table('versions').' WHERE id=?', 's', array($version_id))->get_result()->fetch_assoc();
-  if (!$row) throw new YudaoDesignError('文件尚未发布或不存在。', 404);
-  $version = json_decode($row['document'], true, 512, JSON_THROW_ON_ERROR);
-  $asset = null;
-  foreach ($version['assets'] as $candidate) if ($candidate['id'] === $asset_id) $asset = $candidate;
-  if (!$asset || basename($asset['file']) !== $asset['file']) throw new YudaoDesignError('文件不存在。', 404);
-  $root = yudao_design_storage();
-  $path = realpath($root.'/'.$version_id.'/'.$asset['file']);
-  if (!$path || strpos($path, $root.'/'.$version_id.'/') !== 0 || !is_file($path)) throw new YudaoDesignError('原文件暂时不可读取。', 404);
+  list($asset, $path) = yudao_design_resolve_asset($version_id, $asset_id);
   $size = filesize($path); $start = 0; $end = $size-1;
   $etag = '"'.$asset['sha256'].'"';
   if (($_SERVER['HTTP_IF_NONE_MATCH'] ?? '') === $etag && !isset($_SERVER['HTTP_RANGE'])) { http_response_code(304); exit; }
