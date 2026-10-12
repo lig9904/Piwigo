@@ -1,7 +1,7 @@
 <?php
 /*
 Plugin Name: 渔岛设计资料
-Version: 1.3.0
+Version: 1.3.1
 Description: 项目版本统一上传、图片与三维模型预览、PDF 查看及 CAD 下载。
 Author: Yudao
 Has Settings: true

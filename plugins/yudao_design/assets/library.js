@@ -86,7 +86,7 @@
   }
   function notice(message, error) { state.notice = message; var node = root.querySelector('[data-notice]'); if (!node) { node = document.createElement('div'); node.className = 'yd-notice'; node.dataset.notice = ''; root.prepend(node); } if (node) { node.innerHTML = esc(message) + receiptLink(); node.hidden = !message; node.classList.toggle('yd-error', !!error); node.setAttribute('role', error ? 'alert' : 'status'); } }
   function header() {
-    return '<header class="yd-header"><a class="yd-brand" href="' + esc(pageLink()) + '"><span class="yd-brand-mark" aria-hidden="true">渔</span><span>渔岛设计资料库<small>项目 · 方案 · 现场资料</small></span></a><nav aria-label="项目导航"><a href="' + esc(pageLink()) + '">全部项目</a>' + (canUpload ? '<button type="button" class="yd-button yd-primary" data-action="open-upload">上传项目资料</button>' : '<span class="yd-readonly">' + (config.isLoggedIn ? '登录浏览' : '共享浏览') + '</span>') + '</nav></header>';
+    return '<header class="yd-header"><a class="yd-brand" href="' + esc(pageLink()) + '"><img class="yd-brand-logo" src="' + esc(safeUrl('plugins/yudao_design/assets/yudao-logo.jpg', new URL('.', apiUrl))) + '" alt="渔岛海洋度假区" width="64" height="50"><span>渔岛设计资料库<small>项目 · 方案 · 现场资料</small></span></a><nav aria-label="项目导航"><a href="' + esc(pageLink()) + '">全部项目</a>' + (canUpload ? '<button type="button" class="yd-button yd-primary" data-action="open-upload">上传项目资料</button>' : '<span class="yd-readonly">' + (config.isLoggedIn ? '登录浏览' : '共享浏览') + '</span>') + '</nav></header>';
   }
   function render() {
     root.className = 'yd-app';
