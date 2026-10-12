@@ -7,22 +7,31 @@
   try { config = JSON.parse(root.dataset.config || '{}'); } catch (error) {
     root.textContent = '项目库配置无法读取，请联系管理员。'; return;
   }
-  var state = { projects: [], project: null, version: '', imageRole: 'effect', loading: false, uploading: false, files: [], limits: config.limits || {}, xhr: null, notice: '', uploadOpen: false };
+  var state = { projects: [], project: null, version: '', imageRole: 'effect', loading: false, uploading: false, files: [], limits: config.limits || {}, xhr: null, notice: '', uploadOpen: false, configuring: false, requestId: '', requestSignature: '', savedReceipt: null, detailRevision: 0 };
   var lightbox = null, previousFocus = null, zoom = 1, lightboxIndex = 0, lightboxImages = [];
   var esc = function (value) { return String(value == null ? '' : value).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
-  function safeUrl(value) {
+  function safeUrl(value, base) {
     if (typeof value !== 'string' || !value.trim() || /[\u0000-\u0020\u007f\\]/.test(value) || /^\/\//.test(value)) return '';
-    try { var url = new URL(value, document.baseURI); return /^https?:$/.test(url.protocol) ? url.href : ''; } catch (error) { return ''; }
+    try { var url = new URL(value, base || document.baseURI); return /^https?:$/.test(url.protocol) ? url.href : ''; } catch (error) { return ''; }
   }
   var apiUrl = safeUrl(config.apiUrl);
   if (!apiUrl) { root.textContent = '项目库接口地址无效，请联系管理员。'; return; }
   var canUpload = config.canUpload === true || config.canUpload === 1 || config.canUpload === '1';
-  function pageLink(id) {
+  function pageLink(id, versionId, section, role) {
     var url = new URL(safeUrl(config.baseUrl) || window.location.href);
-    url.searchParams.delete('project');
+    ['project', 'version', 'role'].forEach(function (key) { url.searchParams.delete(key); });
     if (id) url.searchParams.set('project', id);
-    url.hash = '';
+    if (id && versionId) url.searchParams.set('version', versionId);
+    if (id && role) url.searchParams.set('role', role);
+    url.hash = section || '';
     return url.href;
+  }
+  function syncVersionUrl(section, role) {
+    window.history.replaceState(null, '', pageLink(state.project.id, state.version, section, role));
+  }
+  function focusSection(section) {
+    var target = root.querySelector('#' + section);
+    if (target) { target.scrollIntoView({ behavior: 'smooth', block: 'start' }); target.setAttribute('tabindex', '-1'); target.focus({ preventScroll: true }); }
   }
   function endpoint(method, params) {
     var url = new URL(apiUrl); url.searchParams.set('method', method);
@@ -49,21 +58,25 @@
     }, null);
   }
   function chooseImageRole(version) { state.imageRole = assets(version).some(function (a) { return a.kind === 'image' && a.role !== 'source'; }) ? 'effect' : 'source'; }
-  function activeVersion() { return versions(state.project).find(function (v) { return String(v.id) === state.version; }) || latest(state.project); }
+  function defaultVersion(project) { return versions(project).find(function (v) { return String(v.id) === String(project.current_version_id); }) || latest(project); }
+  function activeVersion() { return versions(state.project).find(function (v) { return String(v.id) === state.version; }) || defaultVersion(state.project); }
+  function projectAssets(project) { return versions(project).flatMap(function (version) { return assets(version).map(function (asset) { return { asset: asset, version: version }; }); }); }
+  function projectCover(project) { var configured = projectAssets(project).find(function (item) { return String(item.asset.id) === String(project.cover_asset_id) && item.asset.kind === 'image' && safeUrl(item.asset.url); }); var images = assets(defaultVersion(project)).filter(function (a) { return a.kind === 'image' && safeUrl(a.url); }); return configured ? configured.asset : images.find(function (a) { return a.role === 'effect'; }) || images[0]; }
   function assets(version) { return version && Array.isArray(version.assets) ? version.assets : []; }
   function date(value) { var d = new Date(value); return Number.isNaN(d.getTime()) ? '日期未记录' : d.toLocaleDateString('zh-CN'); }
   function bytes(value) {
     var n = Number(value); if (!Number.isFinite(n) || n < 0) return '';
     return n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : (n / 1024).toFixed(0) + ' KB';
   }
-  function notice(message, error) { state.notice = message; var node = root.querySelector('[data-notice]'); if (node) { node.textContent = message; node.hidden = !message; node.classList.toggle('yd-error', !!error); node.setAttribute('role', error ? 'alert' : 'status'); } }
+  function notice(message, error) { state.notice = message; var node = root.querySelector('[data-notice]'); if (!node) { node = document.createElement('div'); node.className = 'yd-notice'; node.dataset.notice = ''; root.prepend(node); } if (node) { node.innerHTML = esc(message) + receiptLink(); node.hidden = !message; node.classList.toggle('yd-error', !!error); node.setAttribute('role', error ? 'alert' : 'status'); } }
   function header() {
     return '<header class="yd-header"><a class="yd-brand" href="' + esc(pageLink()) + '"><span class="yd-brand-mark" aria-hidden="true">渔</span><span>渔岛设计资料库<small>项目 · 方案 · 现场资料</small></span></a><nav aria-label="项目导航"><a href="' + esc(pageLink()) + '">全部项目</a>' + (canUpload ? '<button type="button" class="yd-button yd-primary" data-action="open-upload">上传项目资料</button>' : '<span class="yd-readonly">共享浏览</span>') + '</nav></header>';
   }
   function render() {
     root.className = 'yd-app';
-    root.innerHTML = header() + '<main class="yd-main"><div class="yd-notice" data-notice role="status"' + (!state.notice ? ' hidden' : '') + '>' + esc(state.notice) + '</div>' + (state.loading ? '<div class="yd-empty" role="status"><span class="yd-spinner" aria-hidden="true"></span><h2>正在读取项目资料…</h2></div>' : state.project ? renderDetail() : renderList()) + '</main>' + (canUpload ? renderUpload() : '');
+    root.innerHTML = header() + '<main class="yd-main"><div class="yd-notice" data-notice role="status"' + (!state.notice ? ' hidden' : '') + '>' + esc(state.notice) + receiptLink() + '</div>' + (state.loading ? '<div class="yd-empty" role="status"><span class="yd-spinner" aria-hidden="true"></span><h2>正在读取项目资料…</h2></div>' : state.project ? renderDetail() : renderList()) + '</main>' + (canUpload ? renderUpload() : '');
     bindModels();
+    root.querySelectorAll('[data-version], [data-image-role], [data-action="set-current"], [data-cover-id]').forEach(function (el) { if (state.configuring || state.uploading) el.disabled = true; });
   }
   function bindModels() {
     root.querySelectorAll('model-viewer').forEach(function (viewer) {
@@ -72,43 +85,75 @@
     });
   }
   function renderContent() {
-    root.querySelector('.yd-main').innerHTML = '<div class="yd-notice" data-notice role="status"' + (!state.notice ? ' hidden' : '') + '>' + esc(state.notice) + '</div>' + renderDetail();
+    root.querySelector('.yd-main').innerHTML = '<div class="yd-notice" data-notice role="status"' + (!state.notice ? ' hidden' : '') + '>' + esc(state.notice) + receiptLink() + '</div>' + renderDetail();
     bindModels();
+    root.querySelectorAll('[data-version], [data-image-role], [data-action="set-current"], [data-cover-id]').forEach(function (el) { if (state.configuring || state.uploading) el.disabled = true; });
   }
   function renderList() {
     var regions = Array.from(new Set(state.projects.map(function (p) { return p.region || '未分类'; })));
     return '<section class="yd-intro"><div><p class="yd-eyebrow">项目 · 设计 · 资料</p><h1>让每一版设计，都有迹可循</h1><p>现场原貌、方案效果、三维模型与图纸，按项目和版本集中查看。</p></div><div class="yd-summary"><strong>' + state.projects.length + '</strong><span>个项目</span></div></section>' +
       '<section aria-label="项目库"><div class="yd-toolbar"><h2>项目资料</h2><div class="yd-filters"><label class="yd-search"><span class="yd-sr-only">搜索项目</span><input type="search" data-search placeholder="搜索项目名称或区域"></label><label><span class="yd-sr-only">筛选区域</span><select data-region><option value="">全部区域</option>' + regions.map(function (r) { return '<option value="' + esc(r) + '">' + esc(r) + '</option>'; }).join('') + '</select></label></div></div><div class="yd-project-grid">' + state.projects.map(function (p) {
-        var v = latest(p), images = assets(v).filter(function (a) { return a.kind === 'image' && safeUrl(a.url); });
-        var cover = images.find(function (a) { return a.role === 'effect'; }) || images[0];
+        var v = defaultVersion(p), cover = projectCover(p);
         return '<a class="yd-project-card" href="' + esc(pageLink(p.id)) + '" data-project-card data-search-text="' + esc((p.title || '') + ' ' + (p.region || '未分类')) + '" data-project-region="' + esc(p.region || '未分类') + '"><div class="yd-project-cover">' + (cover ? '<img src="' + esc(safeUrl(cover.url)) + '" alt="' + esc(p.title) + ' 项目预览" loading="lazy">' : '<span class="yd-cover-placeholder" aria-hidden="true">图纸 / 影像 / 模型</span>') + '<span class="yd-region-badge">' + esc(p.region || '未分类') + '</span></div><div class="yd-card-body"><h3>' + esc(p.title || '未命名项目') + '</h3><div class="yd-card-meta"><span>' + versions(p).length + ' 个版本</span><span>' + (v ? esc(v.label || '未命名版本') : '暂无资料') + '</span></div><p>' + (v ? '更新于 ' + esc(date(v.created_at)) : '等待首版资料') + '<span aria-hidden="true">↗</span></p></div></a>';
       }).join('') + '</div><div class="yd-empty" data-no-projects' + (state.projects.length ? ' hidden' : '') + '><h3>暂无项目资料</h3><p>' + (canUpload ? '上传首个项目，将现场与设计方案整理在一起。' : '管理员上传后，资料会显示在这里。') + '</p></div><div class="yd-empty" data-no-matches hidden><h3>没有找到匹配的项目</h3><p>请尝试其他关键词或区域。</p></div></section>';
   }
   function download(asset, label) {
     var url = safeUrl(asset.url); return url ? '<a class="yd-download" href="' + esc(url) + '" download target="_blank" rel="noopener">' + esc(label || '下载文件') + '<span aria-hidden="true"> ↓</span></a>' : '<span class="yd-file-unavailable">文件地址不可用</span>';
   }
+  function receiptLink() {
+    return state.savedReceipt ? ' <a class="yd-saved-link" href="' + esc(pageLink(state.savedReceipt.project_id, state.savedReceipt.version_id)) + '">打开已保存版本 ↗</a>' : '';
+  }
+  function categoryLink(item, section, role, label) {
+    return '<a href="' + esc(pageLink(state.project.id, item.version.id, section, role)) + '" data-jump-version="' + esc(item.version.id) + '" data-jump-section="' + esc(section) + '"' + (role ? ' data-jump-role="' + esc(role) + '"' : '') + '><span>' + esc(label || item.asset.name || '未命名文件') + '</span><small>' + esc(item.version.label || '未命名版本') + (item.asset.kind === 'image' ? ' · ' + (item.asset.role === 'source' ? '原始现场' : '效果图') : '') + '</small></a>';
+  }
+  function renderProjectResources() {
+    var p = state.project, items = projectAssets(p), kinds = function (kind) { return items.filter(function (i) { return i.asset.kind === kind; }); };
+    var images = kinds('image'), models = kinds('model'), pdfs = kinds('pdf'), cads = kinds('cad'), docs = kinds('document');
+    var groups = [
+      { label: '效果 / 现场', entries: images, section: 'yd-images' },
+      { label: '配色卡', match: /配色|色卡|色板|色彩|颜色|色号|palette|colou?r/i },
+      { label: '材质资料', match: /材质|材料|面料|material|texture/i },
+      { label: '日景 / 夜景', match: /日景|夜景|日夜|日间|夜间|白天|夜晚|\bday(?:light|time)?\b|\bnight\b/i },
+      { label: '测量建议', match: /测量|测绘|尺寸建议|measurement|survey/i },
+      { label: 'PDF / CAD', entries: pdfs.concat(cads), section: 'yd-pdfs' },
+      { label: '说明文件', entries: docs, section: 'yd-documents' }
+    ];
+    var navigation = groups.map(function (group) {
+      var entries = group.entries || items.filter(function (i) { return group.match.test((i.version.label || '') + ' ' + (i.asset.name || '')); });
+      return '<details class="yd-resource-group"><summary>' + group.label + '<span>' + entries.length + '</span></summary>' + (entries.length ? '<div class="yd-resource-links">' + entries.map(function (item) {
+        var section = group.section || (item.asset.kind === 'image' ? 'yd-images' : item.asset.kind === 'model' ? 'yd-project-models' : item.asset.kind === 'pdf' ? 'yd-pdfs' : item.asset.kind === 'cad' ? 'yd-cads' : 'yd-documents');
+        if (group.label === 'PDF / CAD' && item.asset.kind === 'cad') section = 'yd-cads';
+        return categoryLink(item, section, item.asset.kind === 'image' ? (item.asset.role === 'source' ? 'source' : 'effect') : '');
+      }).join('') + '</div>' : '<p class="yd-resource-empty">暂无明确命名的资料</p>') + '</details>';
+    }).join('');
+    var interactive = (Array.isArray(p.interactive_models) ? p.interactive_models : []).map(function (entry) {
+      var url = safeUrl(entry.url, new URL('.', apiUrl)), version = versions(p).find(function (v) { return String(v.id) === String(entry.version_id); });
+      return '<article class="yd-interactive-card"><span class="yd-model-tag">完整互动模型</span><h3>' + esc(entry.label || entry.key || '互动模型') + '</h3><p>' + esc(version ? version.label : '项目资料') + '</p>' + (url ? '<a class="yd-button yd-primary" href="' + esc(url) + '" target="_blank" rel="noopener">打开完整互动模型 ↗</a>' : '<span class="yd-file-unavailable">入口地址不可用</span>') + '</article>';
+    }).join('');
+    var modelCards = models.map(function (item) { var a = item.asset, url = safeUrl(a.url); return '<article class="yd-model-card"><div class="yd-file-heading"><div><h3>' + esc(a.name) + '</h3><p class="yd-meta">' + esc(item.version.label || '未命名版本') + ' · GLB 文件</p></div>' + download(a) + '</div>' + (url ? '<model-viewer src="' + esc(url) + '" alt="' + esc(a.name) + ' 三维模型" camera-controls touch-action="pan-y" interaction-prompt="auto"><span slot="poster" class="yd-model-poster">三维模型加载中…</span></model-viewer><p class="yd-preview-status" data-model-status>拖动旋转 · 滚轮或双指缩放；完整功能请使用上方互动入口。</p>' : '<div class="yd-empty">模型地址不可用</div>') + '</article>'; }).join('');
+    return '<section class="yd-project-resources" aria-label="全项目资料"><div class="yd-section-heading"><h2>项目全部资料</h2><p>' + versions(p).length + ' 个版本 · ' + items.length + ' 个文件</p></div><p class="yd-project-totals">影像 ' + images.length + ' · 三维模型 ' + models.length + ' · PDF ' + pdfs.length + ' · CAD ' + cads.length + ' · 说明文件 ' + docs.length + '</p><nav class="yd-resource-nav" aria-label="全版本分类资料"><a class="yd-model-shortcut" href="#yd-project-models">三维模型 <strong>' + models.length + '</strong> · 完整互动入口 ' + (Array.isArray(p.interactive_models) ? p.interactive_models.length : 0) + '</a>' + navigation + '</nav></section><section class="yd-section" id="yd-project-models"><div class="yd-section-heading"><h2>三维模型 · 全部版本</h2><p>完整互动入口优先 · GLB 按版本保留</p></div>' + (interactive ? '<div class="yd-interactive-grid">' + interactive + '</div>' : '') + (modelCards ? '<div class="yd-model-grid">' + modelCards + '</div>' : (!interactive ? '<p class="yd-resource-empty">此项目暂无三维模型。</p>' : '')) + '</section>';
+  }
   function renderDetail() {
     var p = state.project, v = activeVersion(), all = assets(v), imgs = all.filter(function (a) { return a.kind === 'image'; });
     var visible = imgs.filter(function (a) { return a.role === state.imageRole || (!['source', 'effect'].includes(a.role) && state.imageRole === 'effect'); });
-    var models = all.filter(function (a) { return a.kind === 'model'; }), pdfs = all.filter(function (a) { return a.kind === 'pdf'; }), cads = all.filter(function (a) { return a.kind === 'cad'; }), documents = all.filter(function (a) { return a.kind === 'document'; });
-    return '<a class="yd-back" href="' + esc(pageLink()) + '">← 返回项目库</a><section class="yd-detail-heading"><div><p class="yd-eyebrow">' + esc(p.region || '未分类') + '</p><h1>' + esc(p.title || '未命名项目') + '</h1><p>按版本查看现场、效果、模型和图纸。</p></div>' + (canUpload ? '<button type="button" class="yd-button yd-primary" data-action="open-upload">上传新版本</button>' : '') + '</section><section class="yd-version-panel" aria-label="项目版本"><label>当前版本<select data-version>' + versions(p).map(function (item) { return '<option value="' + esc(item.id) + '"' + (v && item.id === v.id ? ' selected' : '') + '>' + esc(item.label || '未命名版本') + ' · ' + esc(date(item.created_at)) + '</option>'; }).join('') + '</select></label><div><span class="yd-meta">' + (v ? '保存于 ' + esc(date(v.created_at)) + ' · ' + all.length + ' 个文件' : '暂无版本') + '</span><p class="yd-description">' + esc(v && v.description || '此版本未填写说明。') + '</p></div></section>' +
-      (imgs.length ? '<section class="yd-section"><div class="yd-section-heading"><h2>项目影像</h2><div class="yd-tabs" role="group" aria-label="影像类型"><button type="button" data-image-role="effect" aria-pressed="' + (state.imageRole === 'effect') + '">效果图 <span>' + imgs.filter(function (a) { return a.role !== 'source'; }).length + '</span></button><button type="button" data-image-role="source" aria-pressed="' + (state.imageRole === 'source') + '">原始现场 <span>' + imgs.filter(function (a) { return a.role === 'source'; }).length + '</span></button></div></div><div class="yd-image-grid">' + visible.map(function (a) { var url = safeUrl(a.url); return '<figure class="yd-image-card">' + (url ? '<button type="button" data-image-id="' + esc(a.id) + '" aria-label="放大查看 ' + esc(a.name) + '"><img src="' + esc(url) + '" alt="' + esc(a.name) + '" loading="lazy"><span class="yd-image-hint">放大查看 ↗</span></button>' : '<div class="yd-empty">图片地址不可用</div>') + '<figcaption><span title="' + esc(a.name) + '">' + esc(a.name) + '</span>' + download(a, '原图') + '</figcaption></figure>'; }).join('') + '</div>' + (!visible.length ? '<div class="yd-empty">此版本没有' + (state.imageRole === 'source' ? '原始现场图片' : '效果图') + '。</div>' : '') + '</section>' : '') +
-      (models.length ? '<section class="yd-section"><div class="yd-section-heading"><h2>三维模型</h2><p>拖动旋转 · 滚轮或双指缩放</p></div><div class="yd-model-grid">' + models.map(function (a) { var url = safeUrl(a.url); return '<article class="yd-model-card"><div class="yd-file-heading"><h3>' + esc(a.name) + '</h3>' + download(a) + '</div>' + (url ? '<model-viewer src="' + esc(url) + '" alt="' + esc(a.name) + ' 三维模型" camera-controls auto-rotate touch-action="pan-y" interaction-prompt="auto"><span slot="poster" class="yd-model-poster">三维模型加载中…</span></model-viewer><p class="yd-preview-status" data-model-status>首次加载可能需要一些时间，可同时下载原文件。</p>' : '<div class="yd-empty">模型地址不可用</div>') + '</article>'; }).join('') + '</div></section>' : '') +
-      (pdfs.length ? '<section class="yd-section"><div class="yd-section-heading"><h2>方案文档</h2><p>同页阅读与文件下载</p></div>' + pdfs.map(function (a) { var url = safeUrl(a.url); return '<article class="yd-pdf-card"><div class="yd-file-heading"><h3>' + esc(a.name) + '</h3>' + download(a) + '</div>' + (url ? '<iframe src="' + esc(url) + '" title="' + esc(a.name) + ' PDF 预览" loading="lazy"></iframe><p class="yd-preview-status">如果浏览器未显示 PDF，请点击上方下载文件。</p>' : '<div class="yd-empty">文档地址不可用</div>') + '</article>'; }).join('') + '</section>' : '') +
-      (cads.length ? '<section class="yd-section"><div class="yd-section-heading"><h2>CAD 图纸</h2><p>下载后使用 CAD 软件查看</p></div><ul class="yd-file-list">' + cads.map(function (a) { return '<li><span class="yd-file-icon" aria-hidden="true">CAD</span><div><strong>' + esc(a.name) + '</strong><span>' + esc(bytes(a.bytes)) + '</span></div>' + download(a, '下载图纸') + '</li>'; }).join('') + '</ul></section>' : '') + (documents.length ? '<section class="yd-section"><div class="yd-section-heading"><h2>配色与说明文件</h2><p>下载原始表格与文字说明</p></div><ul class="yd-file-list">' + documents.map(function (a) { return '<li><span class="yd-file-icon" aria-hidden="true">FILE</span><div><strong>' + esc(a.name) + '</strong><span>' + esc(bytes(a.bytes)) + '</span></div>' + download(a) + '</li>'; }).join('') + '</ul></section>' : '') + (!all.length ? '<div class="yd-empty"><h3>此版本暂无文件</h3><p>' + (canUpload ? '通过上传项目资料添加首版内容。' : '请等待管理员上传资料。') + '</p></div>' : '');
+    var pdfs = all.filter(function (a) { return a.kind === 'pdf'; }), cads = all.filter(function (a) { return a.kind === 'cad'; }), documents = all.filter(function (a) { return a.kind === 'document'; });
+    return '<a class="yd-back" href="' + esc(pageLink()) + '">← 返回项目库</a><section class="yd-detail-heading"><div><p class="yd-eyebrow">' + esc(p.region || '未分类') + '</p><h1>' + esc(p.title || '未命名项目') + '</h1><p>按版本查看现场、效果、模型和图纸。</p></div>' + (canUpload ? '<button type="button" class="yd-button yd-primary" data-action="open-upload">上传新版本</button>' : '') + '</section>' + renderProjectResources() + '<section class="yd-version-panel" aria-label="项目版本"><label>当前版本<select data-version>' + versions(p).map(function (item) { return '<option value="' + esc(item.id) + '"' + (v && String(item.id) === String(v.id) ? ' selected' : '') + '>' + esc(item.label || '未命名版本') + (String(item.id) === String((defaultVersion(p) || {}).id) ? ' · 默认' : '') + ' · ' + esc(date(item.created_at)) + '</option>'; }).join('') + '</select></label><div><span class="yd-meta">' + (v ? '保存于 ' + esc(date(v.created_at)) + ' · ' + all.length + ' 个文件' : '暂无版本') + '</span><p class="yd-description">' + esc(v && v.description || '此版本未填写说明。') + '</p><div class="yd-version-actions"><button type="button" class="yd-button" data-action="copy-version">复制当前版本链接</button>' + (canUpload && v ? '<button type="button" class="yd-button" data-action="set-current"' + (state.configuring || String(p.current_version_id) === String(v.id) ? ' disabled' : '') + '>' + (String(p.current_version_id) === String(v.id) ? '已设为默认版本' : '设此版本为默认') + '</button>' : '') + '</div></div></section><div class="yd-section-heading yd-current-heading"><h2>版本详情</h2><p>' + esc(v && v.label || '') + '</p></div>' +
+      (imgs.length ? '<section class="yd-section" id="yd-images"><div class="yd-section-heading"><h2>项目影像</h2><div class="yd-tabs" role="group" aria-label="影像类型"><button type="button" data-image-role="effect" aria-pressed="' + (state.imageRole === 'effect') + '">效果图 <span>' + imgs.filter(function (a) { return a.role !== 'source'; }).length + '</span></button><button type="button" data-image-role="source" aria-pressed="' + (state.imageRole === 'source') + '">原始现场 <span>' + imgs.filter(function (a) { return a.role === 'source'; }).length + '</span></button></div></div><div class="yd-image-grid">' + visible.map(function (a) { var url = safeUrl(a.url); return '<figure class="yd-image-card">' + (url ? '<button type="button" data-image-id="' + esc(a.id) + '" aria-label="放大查看 ' + esc(a.name) + '"><img src="' + esc(url) + '" alt="' + esc(a.name) + '" loading="lazy"><span class="yd-image-hint">放大查看 ↗</span></button>' : '<div class="yd-empty">图片地址不可用</div>') + '<figcaption><span title="' + esc(a.name) + '">' + esc(a.name) + '</span>' + '<span class="yd-image-role">' + (a.role === 'source' ? '原始现场' : '效果图') + '</span>' + download(a, '原图') + (canUpload ? '<button type="button" class="yd-cover-action" data-cover-id="' + esc(a.id) + '"' + (state.configuring || String(p.cover_asset_id) === String(a.id) ? ' disabled' : '') + '>' + (String(p.cover_asset_id) === String(a.id) ? '当前封面' : '设为封面') + '</button>' : '') + '</figcaption></figure>'; }).join('') + '</div>' + (!visible.length ? '<div class="yd-empty">此版本没有' + (state.imageRole === 'source' ? '原始现场图片' : '效果图') + '。</div>' : '') + '</section>' : '') +
+      (pdfs.length ? '<section class="yd-section" id="yd-pdfs"><div class="yd-section-heading"><h2>方案文档</h2><p>同页阅读与文件下载</p></div>' + pdfs.map(function (a) { var url = safeUrl(a.url); return '<article class="yd-pdf-card"><div class="yd-file-heading"><h3>' + esc(a.name) + '</h3>' + download(a) + '</div>' + (url ? '<iframe src="' + esc(url) + '" title="' + esc(a.name) + ' PDF 预览" loading="lazy"></iframe><p class="yd-preview-status">如果浏览器未显示 PDF，请点击上方下载文件。</p>' : '<div class="yd-empty">文档地址不可用</div>') + '</article>'; }).join('') + '</section>' : '') +
+      (cads.length ? '<section class="yd-section" id="yd-cads"><div class="yd-section-heading"><h2>CAD 图纸</h2><p>下载后使用 CAD 软件查看</p></div><ul class="yd-file-list">' + cads.map(function (a) { return '<li><span class="yd-file-icon" aria-hidden="true">CAD</span><div><strong>' + esc(a.name) + '</strong><span>' + esc(bytes(a.bytes)) + '</span></div>' + download(a, '下载图纸') + '</li>'; }).join('') + '</ul></section>' : '') + (documents.length ? '<section class="yd-section" id="yd-documents"><div class="yd-section-heading"><h2>配色与说明文件</h2><p>下载原始表格与文字说明</p></div><ul class="yd-file-list">' + documents.map(function (a) { return '<li><span class="yd-file-icon" aria-hidden="true">FILE</span><div><strong>' + esc(a.name) + '</strong><span>' + esc(bytes(a.bytes)) + '</span></div>' + download(a) + '</li>'; }).join('') + '</ul></section>' : '') + (!all.length ? '<div class="yd-empty"><h3>此版本暂无文件</h3><p>' + (canUpload ? '通过上传项目资料添加首版内容。' : '请等待管理员上传资料。') + '</p></div>' : '');
   }
   function renderUpload() {
     return '<section class="yd-upload-panel" data-upload-panel' + (!state.uploadOpen ? ' hidden' : '') + ' aria-labelledby="yd-upload-title"><div class="yd-upload-inner"><div class="yd-section-heading"><div><p class="yd-eyebrow">统一资料上传</p><h2 id="yd-upload-title">上传项目资料</h2></div><button type="button" class="yd-close" data-action="close-upload" aria-label="关闭上传面板">×</button></div><p class="yd-upload-lead">一次提交一个版本，图片、模型、PDF 和 CAD 图纸可一起上传。</p><form data-upload-form><div class="yd-form-grid"><label class="yd-field yd-field-wide">归属项目<select name="project_id" data-upload-project><option value="">新建项目</option>' + state.projects.map(function (p) { return '<option value="' + esc(p.id) + '"' + (state.project && state.project.id === p.id ? ' selected' : '') + '>' + esc(p.title) + '</option>'; }).join('') + '</select></label><label class="yd-field">项目名称<input name="title" required maxlength="160" value="' + esc(state.project && state.project.title || '') + '"' + (state.project ? ' readonly' : '') + ' placeholder="例如：室外温泉景观改造"></label><label class="yd-field">所属区域<input name="region" maxlength="160" value="' + esc(state.project && state.project.region || '') + '"' + (state.project ? ' readonly' : '') + ' placeholder="例如：温泉区"></label><label class="yd-field yd-field-wide">版本名称<input name="version" required maxlength="100" placeholder="例如：R03 · 方案汇报"></label><label class="yd-field yd-field-wide">版本说明<textarea name="description" rows="3" maxlength="5000" placeholder="记录本版内容、调整范围或待确认事项"></textarea></label></div><label class="yd-dropzone"><span class="yd-drop-icon" aria-hidden="true">↑</span><strong>选择或拖入本版文件</strong><span>图片、GLB、PDF、DWG / DXF、CSV / TXT</span><input type="file" name="files[]" multiple required accept=".jpg,.jpeg,.png,.webp,.glb,.pdf,.dwg,.dxf,.csv,.txt" data-files></label><p class="yd-upload-limits">' + esc(limitText()) + '</p><div data-file-selection aria-live="polite"></div><div class="yd-upload-status" data-upload-status role="status" hidden><progress max="100" value="0"></progress><p></p></div><div class="yd-upload-actions"><span>服务器确认保存成功后，才会更新项目资料。</span><button type="button" class="yd-button" data-action="cancel-upload" hidden>取消上传</button><button type="submit" class="yd-button yd-primary">保存此版本</button></div></form></div></section>';
   }
   async function load() {
-    state.loading = true; render();
+    state.detailRevision++; state.loading = true; render();
     try {
       var id = new URL(window.location.href).searchParams.get('project');
       var list = await get('yudaoDesign.projects.list');
       if (!Array.isArray(list.projects)) throw new Error('项目列表格式不正确。');
       state.projects = list.projects; state.limits = list.limits || state.limits;
-      if (id) { var detail = await get('yudaoDesign.projects.get', { project_id: id }); if (!detail.project) throw new Error('未找到该项目。'); state.project = detail.project; state.version = String((latest(state.project) || {}).id || ''); chooseImageRole(activeVersion()); }
-      state.loading = false; render();
+      if (id) { var detail = await get('yudaoDesign.projects.get', { project_id: id }); if (!detail.project) throw new Error('未找到该项目。'); state.project = detail.project; var requested = new URL(window.location.href).searchParams.get('version'); var chosen = versions(state.project).find(function (v) { return String(v.id) === requested; }) || defaultVersion(state.project); state.version = String((chosen || {}).id || ''); chooseImageRole(activeVersion()); var role = new URL(window.location.href).searchParams.get('role'); if (role === 'source' || role === 'effect') state.imageRole = role; if (requested && (!chosen || String(chosen.id) !== requested)) state.notice = '链接中的版本不存在，已显示项目默认版本。'; }
+      state.loading = false; render(); if (state.project && /^#yd-(images|project-models|pdfs|cads|documents)$/.test(window.location.hash)) focusSection(window.location.hash.slice(1));
     } catch (error) { state.loading = false; state.project = null; render(); notice(error.message || '项目资料加载失败。', true); }
   }
   function filterProjects() {
@@ -157,16 +202,88 @@
     root.querySelector('[data-action="close-upload"]').disabled = busy;
     root.querySelector('[data-upload-form] button[type="submit"]').textContent = busy ? '正在保存…' : '保存此版本';
   }
+  async function copyVersionLink() {
+    var link = pageLink(state.project.id, state.version), copied = false;
+    try { if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(link); copied = true; } } catch (error) {}
+    if (!copied) {
+      var field = document.createElement('textarea'), focused = document.activeElement;
+      field.value = link; field.setAttribute('aria-label', '当前版本链接'); field.style.cssText = 'position:fixed;left:-9999px;top:0'; document.body.appendChild(field); field.select();
+      try { copied = document.execCommand('copy'); } catch (error) {}
+      field.remove(); if (focused && focused.isConnected) focused.focus({ preventScroll: true });
+    }
+    notice(copied ? '当前版本链接已复制。' : '复制失败，请手动复制：' + link, !copied);
+  }
+  async function configureProject(changes, successMessage) {
+    if (!canUpload || state.configuring || state.uploading || !state.project) return;
+    state.detailRevision++;
+    var projectId = String(state.project.id), confirmed = false;
+    state.configuring = true; notice('正在保存项目设置…', false);
+    try {
+      renderContent();
+      var data = new FormData(); data.append('project_id', projectId); data.append('pwg_token', config.token || '');
+      Object.keys(changes).forEach(function (key) { data.append(key, changes[key]); });
+      var response = await fetch(endpoint('yudaoDesign.projects.configure'), { method: 'POST', credentials: 'same-origin', headers: { Accept: 'application/json' }, body: data });
+      var body; try { body = await response.json(); } catch (error) { throw new Error('设置保存响应无法读取，请刷新核对。'); }
+      if (!response.ok) throw new Error(body.message || body.error || '设置保存失败（HTTP ' + response.status + '）。');
+      var result = responseResult(body);
+      confirmed = !!(result.project && String(result.project.id) === projectId) || (result.saved === true && String(result.project_id) === projectId);
+      if (!confirmed) throw new Error('服务器未确认项目设置，请刷新核对。');
+      state.notice = successMessage + (result.warning ? ' ' + result.warning : '');
+      if (result.project) { state.project = result.project; updateProjectList(result.project); }
+      else {
+        notice(state.notice + ' 正在重新读取详情…', false);
+        var fresh = await get('yudaoDesign.projects.get', { project_id: projectId });
+        if (!fresh.project) throw new Error('项目详情不可用。');
+        state.project = fresh.project; updateProjectList(fresh.project);
+      }
+      state.configuring = false; renderContent();
+    } catch (error) {
+      state.configuring = false;
+      var message = confirmed ? successMessage + ' 详情加载失败：' + (error.message || '请刷新核对项目设置。') : (error.message || '项目设置保存失败。');
+      state.notice = message;
+      try { renderContent(); } catch (renderError) {}
+      notice(message, !confirmed);
+    }
+  }
+  function updateProjectList(project) {
+    var index = state.projects.findIndex(function (p) { return String(p.id) === String(project.id); });
+    if (index >= 0) state.projects[index] = project; else state.projects.unshift(project);
+  }
+  function requestId() {
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
+    var values = new Uint8Array(16); window.crypto.getRandomValues(values); values[6] = (values[6] & 15) | 64; values[8] = (values[8] & 63) | 128;
+    return Array.from(values).map(function (v, i) { return ([4, 6, 8, 10].includes(i) ? '-' : '') + v.toString(16).padStart(2, '0'); }).join('');
+  }
+  async function acceptSavedUpload(result) {
+    var project = result.project, committed = result.saved === true && result.project_id && result.version_id;
+    // Older servers return only project; newer servers expose the durable commit receipt.
+    if (!committed && (!project || !project.id)) throw new Error('服务器未确认保存项目，请核查后重试。');
+    var projectId = String(committed ? result.project_id : project.id), versionId = String(committed ? result.version_id : (latest(project) || {}).id || '');
+    state.savedReceipt = { project_id: projectId, version_id: versionId };
+    state.files = []; state.uploading = false; state.xhr = null; state.uploadOpen = false; state.requestId = ''; state.requestSignature = '';
+    state.notice = '版本已保存。' + (result.warning ? ' ' + result.warning : '');
+    state.project = project || null; if (project) updateProjectList(project);
+    state.version = versionId; chooseImageRole(activeVersion());
+    window.history.replaceState(null, '', pageLink(projectId, versionId)); render(); window.scrollTo({ top: 0, behavior: 'smooth' });
+    var refreshRevision = state.detailRevision;
+    function refreshIsCurrent() { return state.detailRevision === refreshRevision && state.savedReceipt && state.savedReceipt.project_id === projectId && state.savedReceipt.version_id === versionId && !state.uploading; }
+    try {
+      var fresh = await get('yudaoDesign.projects.get', { project_id: projectId }); if (!fresh.project) throw new Error('项目详情不可用。');
+      if (refreshIsCurrent()) { state.project = fresh.project; updateProjectList(fresh.project); state.version = versionId; chooseImageRole(activeVersion()); render(); }
+    } catch (error) { if (refreshIsCurrent()) notice('版本已保存；详情加载失败：' + (error.message || '请稍后打开已保存版本。') + (result.warning ? ' ' + result.warning : ''), false); }
+  }
   function submitUpload(form) {
-    if (state.uploading || !form.reportValidity()) return;
+    if (state.uploading || state.configuring || !form.reportValidity()) return;
     if (!state.files.length) { uploadStatus('请先选择至少一个文件。', 0, true); return; }
     var fileError = validateFiles(); if (fileError) { uploadStatus(fileError, 0, true); return; }
+    var signature = JSON.stringify(['title', 'region', 'version', 'description', 'project_id'].map(function (key) { return form.elements[key].value.trim(); }).concat(state.files.map(function (item) { return [item.file.name, item.file.size, item.file.lastModified, item.role]; })));
+    if (!state.requestId || signature !== state.requestSignature) { state.requestId = requestId(); state.requestSignature = signature; }
     var data = new FormData();
     ['title', 'region', 'version', 'description', 'project_id'].forEach(function (key) { var value = form.elements[key].value.trim(); if (value || key !== 'project_id') data.append(key, value); });
-    data.append('method', 'yudaoDesign.projects.import'); data.append('pwg_token', config.token || '');
+    data.append('request_id', state.requestId); data.append('method', 'yudaoDesign.projects.import'); data.append('pwg_token', config.token || '');
     state.files.forEach(function (item) { data.append('files[]', item.file, item.file.name); });
     data.append('manifest', JSON.stringify(state.files.map(function (item) { return { name: item.file.name, role: /\.(jpe?g|png|webp)$/i.test(item.file.name) ? item.role : 'document' }; })));
-    uploadBusy(true); uploadStatus('正在上传文件…', 0);
+    state.detailRevision++; state.savedReceipt = null; uploadBusy(true); uploadStatus('正在上传文件…', 0);
     var xhr = new XMLHttpRequest(); state.xhr = xhr;
     xhr.open('POST', endpoint('yudaoDesign.projects.import'), true); xhr.setRequestHeader('Accept', 'application/json');
     xhr.upload.addEventListener('progress', function (event) { var percent = event.lengthComputable ? Math.min(100, Math.round(event.loaded / event.total * 100)) : null; uploadStatus(percent === 100 ? '文件已传输，服务器正在校验并保存，请稍候…' : '正在上传文件' + (percent == null ? '…' : ' · ' + percent + '%'), percent === 100 ? null : percent); });
@@ -177,14 +294,12 @@
           throw new Error(failure && (failure.message || failure.error) || (xhr.status === 413 ? '上传总容量超过服务器限制，请减少文件大小或数量。' : '上传失败（HTTP ' + xhr.status + '）。'));
         }
         var result; try { result = responseResult(JSON.parse(xhr.responseText)); } catch (error) { throw new Error(error.message || '服务器响应无法读取。'); }
-        if (!result.project || !result.project.id) throw new Error('服务器未确认保存项目，请核查后重试。');
-        state.project = result.project; state.version = String((latest(state.project) || {}).id || ''); chooseImageRole(activeVersion());
-        var index = state.projects.findIndex(function (p) { return p.id === result.project.id; }); if (index >= 0) state.projects[index] = result.project; else state.projects.unshift(result.project);
-        state.files = []; state.uploading = false; state.xhr = null; state.uploadOpen = false; state.notice = '版本已保存，项目资料已更新。';
-        var savedUrl = new URL(window.location.href); savedUrl.searchParams.set('project', result.project.id);
-        window.history.replaceState(null, '', savedUrl.href); render(); window.scrollTo({ top: 0, behavior: 'smooth' });
-        try { var fresh = await get('yudaoDesign.projects.get', { project_id: result.project.id }); if (fresh.project && state.project && state.project.id === result.project.id && !state.uploading) { state.project = fresh.project; renderContent(); } } catch (error) { notice('版本已保存；重新读取暂时失败，当前显示服务器保存结果。', false); }
-      } catch (error) { uploadBusy(false); state.xhr = null; uploadStatus(error.message || '上传失败，请检查后重试。', 0, true); }
+        await acceptSavedUpload(result);
+      } catch (error) {
+        state.xhr = null;
+        if (state.savedReceipt) { state.uploading = false; state.uploadOpen = false; notice('版本已保存；详情加载失败：' + (error.message || '请打开已保存版本。'), false); }
+        else { uploadBusy(false); uploadStatus(error.message || '上传失败，请检查后重试。', 0, true); }
+      }
     });
     xhr.addEventListener('error', function () { uploadBusy(false); state.xhr = null; uploadStatus('网络中断，尚未收到保存确认。请刷新核对项目版本后再重试。', 0, true); });
     xhr.addEventListener('abort', function () { uploadBusy(false); state.xhr = null; uploadStatus('上传已取消。若文件已传输，请刷新核对是否已保存。', 0, true); });
@@ -210,16 +325,20 @@
   root.addEventListener('click', function (event) {
     var action = event.target.closest('[data-action]');
     if (action) {
-      if (action.dataset.action === 'open-upload') { if (state.uploading) return; state.uploadOpen = true; var panel = root.querySelector('[data-upload-panel]'); panel.hidden = false; panel.scrollIntoView({ behavior: 'smooth', block: 'start' }); panel.querySelector('input[name="title"]').focus({ preventScroll: true }); }
+      if (action.dataset.action === 'set-current') configureProject({ current_version_id: state.version }, '默认版本已保存。');
+      else if (action.dataset.action === 'copy-version') copyVersionLink();
+      else if (action.dataset.action === 'open-upload') { if (state.uploading || state.configuring) return; state.detailRevision++; state.uploadOpen = true; var panel = root.querySelector('[data-upload-panel]'); panel.hidden = false; panel.scrollIntoView({ behavior: 'smooth', block: 'start' }); panel.querySelector('input[name="title"]').focus({ preventScroll: true }); }
       else if (action.dataset.action === 'close-upload' && !state.uploading) { state.uploadOpen = false; root.querySelector('[data-upload-panel]').hidden = true; root.querySelector('[data-action="open-upload"]').focus(); }
       else if (action.dataset.action === 'cancel-upload' && state.xhr) state.xhr.abort();
     }
-    var tab = event.target.closest('[data-image-role]'); if (tab && !state.uploading) { state.imageRole = tab.dataset.imageRole; var scrollY = window.scrollY; renderContent(); window.scrollTo(0, scrollY); }
+    var cover = event.target.closest('[data-cover-id]'); if (cover) configureProject({ cover_asset_id: cover.dataset.coverId }, '项目封面已保存。');
+    var jump = event.target.closest('[data-jump-version]'); if (jump && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey && event.button === 0) { if (state.uploading || state.configuring) { event.preventDefault(); return; } event.preventDefault(); state.detailRevision++; state.version = jump.dataset.jumpVersion; chooseImageRole(activeVersion()); if (jump.dataset.jumpRole) state.imageRole = jump.dataset.jumpRole; syncVersionUrl(jump.dataset.jumpSection, jump.dataset.jumpRole); renderContent(); focusSection(jump.dataset.jumpSection); }
+    var tab = event.target.closest('[data-image-role]'); if (tab && !state.uploading && !state.configuring) { state.detailRevision++; state.imageRole = tab.dataset.imageRole; syncVersionUrl('yd-images', state.imageRole); var scrollY = window.scrollY; renderContent(); window.scrollTo(0, scrollY); }
     var image = event.target.closest('[data-image-id]'); if (image) openLightbox(image.dataset.imageId);
   });
   root.addEventListener('change', function (event) {
     var target = event.target;
-    if (target.matches('[data-version]') && !state.uploading) { state.version = target.value; chooseImageRole(activeVersion()); renderContent(); }
+    if (target.matches('[data-version]') && !state.uploading && !state.configuring) { state.detailRevision++; state.version = target.value; chooseImageRole(activeVersion()); syncVersionUrl(); renderContent(); }
     else if (target.matches('[data-region]')) filterProjects();
     else if (target.matches('[data-files]')) selectFiles(target.files);
     else if (target.matches('[data-file-role]') && state.files[Number(target.dataset.fileRole)]) state.files[Number(target.dataset.fileRole)].role = target.value;

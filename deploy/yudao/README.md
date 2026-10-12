@@ -28,6 +28,18 @@ docker --context colima-yudao-piwigo compose --env-file ../piwigo-runtime-eviden
 
 ## 常用操作
 
+### 1.1 项目展示与分享
+
+项目页按全部版本汇总资料，提供完整互动模型与 GLB 预览入口；当前版本仍保留独立的影像、PDF、CAD 和配色文件。完整互动模型使用原 HTML/Three.js 页面及原样依赖，素材位于 `YUDAO_STORAGE_ROOT/interactive/`，通过插件 `viewer.php` 提供，不能依赖 XMT 安装跳板。
+
+管理员可设置默认展示版本和项目封面。后续补传资料保留原设置；版本切换及复制链接带 `project` 和 `version`，刷新或分享后仍打开选定版本。公开浏览保持无需登录。
+
+升级插件至 1.1.0 后运行插件数据库更新（或在已有 Piwigo bootstrap 下调用 `yudao_design_schema()`），新增展示设置与上传请求表，不改动原项目、版本及素材。发布前保留数据库、原插件和旧镜像。
+
+统一上传接口接受可选 UUID `request_id`。同一请求重试须使用相同编号及相同文件、字段；已保存请求返回原保存回执，内容变化返回 409。批量导入可在 manifest 中提供 `request_id`。返回 `saved=true`、`project_id`、`version_id` 即表示已保存；`project=null` 和 `warning` 仅表示详情读取失败，不应重复创建版本。
+
+`yudaoDesign.projects.configure` 使用管理员会话与 `pwg_token`，支持 `current_version_id`、`cover_asset_id`、`interactive_models`。省略字段保留原值，显式空串清除版本/封面设置，`interactive_models=[]` 清除互动入口；所有引用必须属于本项目，互动地址限定插件本地查看器。
+
 ```sh
 docker --context colima-yudao-piwigo compose --env-file ../piwigo-runtime-evidence/yudao-piwigo.env -f deploy/yudao/compose.yaml ps
 docker --context colima-yudao-piwigo compose --env-file ../piwigo-runtime-evidence/yudao-piwigo.env -f deploy/yudao/compose.yaml logs -f piwigo

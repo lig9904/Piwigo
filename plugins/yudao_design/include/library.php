@@ -58,10 +58,26 @@ function yudao_design_schema()
   $queries = array(
     'CREATE TABLE IF NOT EXISTS '.yudao_design_table('projects').' (id CHAR(36) PRIMARY KEY, title VARCHAR(160) NOT NULL, region VARCHAR(160) NOT NULL, created_at DATETIME(6) NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4',
     'CREATE TABLE IF NOT EXISTS '.yudao_design_table('versions').' (id CHAR(36) PRIMARY KEY, project_id CHAR(36) NOT NULL, label VARCHAR(100) NOT NULL, created_at DATETIME(6) NOT NULL, document LONGTEXT NOT NULL, UNIQUE KEY project_label(project_id,label), KEY project_created(project_id,created_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4',
+    'CREATE TABLE IF NOT EXISTS '.yudao_design_table('project_settings').' (project_id CHAR(36) PRIMARY KEY, current_version_id CHAR(36) NULL, cover_asset_id CHAR(36) NULL, interactive_models LONGTEXT NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4',
+    'CREATE TABLE IF NOT EXISTS '.yudao_design_table('import_requests').' (request_id CHAR(36) PRIMARY KEY, fingerprint CHAR(64) NOT NULL, project_id CHAR(36) NOT NULL, version_id CHAR(36) NOT NULL, receipt LONGTEXT NOT NULL, created_at DATETIME(6) NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4',
     'ALTER TABLE '.yudao_design_table('projects').' MODIFY created_at DATETIME(6) NOT NULL',
     'ALTER TABLE '.yudao_design_table('versions').' MODIFY created_at DATETIME(6) NOT NULL',
   );
   foreach ($queries as $sql) { if (!$mysqli->query($sql)) throw new RuntimeException('Schema unavailable'); }
+}
+function yudao_design_has_table($name)
+{
+  global $prefixeTable;
+  return (bool)yudao_design_query('SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=?', 's', array($prefixeTable.'yudao_'.$name))->get_result()->fetch_assoc();
+}
+function yudao_design_require_table($name)
+{
+  if (!yudao_design_has_table($name)) throw new YudaoDesignError('请先执行渔岛设计资料插件数据库升级，再保存展示设置或使用上传重试。', 503);
+}
+function yudao_design_project_settings($project_id)
+{
+  if (!yudao_design_has_table('project_settings')) return null;
+  return yudao_design_query('SELECT * FROM '.yudao_design_table('project_settings').' WHERE project_id=?', 's', array($project_id))->get_result()->fetch_assoc();
 }
 function yudao_design_storage()
 {
@@ -75,6 +91,12 @@ function yudao_design_storage()
 }
 function yudao_design_public_project($project)
 {
+  // A NULL setting deliberately follows the legacy latest-version behavior.
+  $settings = $project['_settings'] ?? null;
+  unset($project['_settings']);
+  $project['current_version_id'] = $settings['current_version_id'] ?? ($project['versions'][0]['id'] ?? null);
+  $project['cover_asset_id'] = $settings['cover_asset_id'] ?? null;
+  $project['interactive_models'] = $settings ? json_decode($settings['interactive_models'], true, 512, JSON_THROW_ON_ERROR) : array();
   foreach ($project['versions'] as &$version)
   {
     foreach ($version['assets'] as &$asset)
@@ -95,6 +117,10 @@ function yudao_design_list_projects()
   $rows = yudao_design_query('SELECT project_id, document FROM '.yudao_design_table('versions').' ORDER BY created_at DESC, id')->get_result();
   while ($row = $rows->fetch_assoc())
     if (isset($projects[$row['project_id']])) $projects[$row['project_id']]['versions'][] = json_decode($row['document'], true, 512, JSON_THROW_ON_ERROR);
+  if (yudao_design_has_table('project_settings')) {
+    $rows = yudao_design_query('SELECT * FROM '.yudao_design_table('project_settings'))->get_result();
+    while ($row = $rows->fetch_assoc()) if (isset($projects[$row['project_id']])) $projects[$row['project_id']]['_settings'] = $row;
+  }
   return array_map('yudao_design_public_project', array_values($projects));
 }
 function yudao_design_get_project($id)
@@ -105,7 +131,83 @@ function yudao_design_get_project($id)
   $row['versions'] = array();
   $versions = yudao_design_query('SELECT document FROM '.yudao_design_table('versions').' WHERE project_id=? ORDER BY created_at DESC, id', 's', array($id))->get_result();
   while ($version = $versions->fetch_assoc()) $row['versions'][] = json_decode($version['document'], true, 512, JSON_THROW_ON_ERROR);
+  $row['_settings'] = yudao_design_project_settings($id);
   return yudao_design_public_project($row);
+}
+function yudao_design_validate_models($value, $version_ids)
+{
+  try {
+    $decoded = json_decode($value, false, 512, JSON_THROW_ON_ERROR);
+    $models = is_array($decoded) ? json_decode($value, true, 512, JSON_THROW_ON_ERROR) : null;
+  }
+  catch (Throwable $e) { throw new YudaoDesignError('交互模型列表必须是 JSON 数组。', 400); }
+  if (!is_array($models) || !array_is_list($models) || count($models) > 64)
+    throw new YudaoDesignError('交互模型列表必须是数组，最多 64 项。', 400);
+  $result = array(); $keys = array();
+  foreach ($models as $model) {
+    if (!is_array($model) || !isset($model['key'], $model['label'], $model['version_id'], $model['url']))
+      throw new YudaoDesignError('交互模型缺少 key、label、version_id 或 url。', 400);
+    $key = yudao_design_text($model['key'], 80, true);
+    $label = yudao_design_text($model['label'], 160, true);
+    if (!preg_match('/\A[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}\z/', $key) || isset($keys[$key]))
+      throw new YudaoDesignError('交互模型 key 无效或重复。', 400);
+    if (!is_string($model['version_id']) || !isset($version_ids[$model['version_id']]))
+      throw new YudaoDesignError('交互模型版本必须属于该项目。', 400);
+    $url = yudao_design_text($model['url'], 2048, true);
+    if (!preg_match('~\Aplugins/yudao_design/viewer\.php/model/[a-zA-Z0-9_-]+/.+\.html\z~u', $url) || preg_match('/[?#\\\\\x00-\x20\x7f]/', $url))
+      throw new YudaoDesignError('交互模型仅支持本站 viewer.php 的相对 HTML 地址。', 400);
+    foreach (explode('/', $url) as $segment) {
+      if (preg_match('/%(?![a-fA-F0-9]{2})/', $segment)) throw new YudaoDesignError('交互模型地址编码无效。', 400);
+      $decoded = rawurldecode($segment);
+      if ($decoded === '' || $decoded === '.' || $decoded === '..' || !mb_check_encoding($decoded, 'UTF-8') || preg_match('/[%\/\\\\\x00-\x20\x7f]/', $decoded))
+        throw new YudaoDesignError('交互模型地址不能包含路径跳转。', 400);
+    }
+    $keys[$key] = true;
+    $result[] = array('key' => $key, 'label' => $label, 'version_id' => $model['version_id'], 'url' => $url);
+  }
+  return $result;
+}
+function yudao_design_configure($params)
+{
+  $project_id = $params['project_id'];
+  if (!yudao_design_valid_id($project_id)) throw new YudaoDesignError('项目编号无效。', 400);
+  yudao_design_require_table('project_settings');
+  $mysqli = yudao_design_connection();
+  $mysqli->begin_transaction();
+  try {
+    if (!yudao_design_query('SELECT id FROM '.yudao_design_table('projects').' WHERE id=? FOR UPDATE', 's', array($project_id))->get_result()->fetch_assoc())
+      throw new YudaoDesignError('没有找到该项目。', 404);
+    $project = yudao_design_get_project($project_id);
+    $settings = yudao_design_project_settings($project_id);
+    $version_ids = array(); $image_ids = array();
+    foreach ($project['versions'] as $version) {
+      $version_ids[$version['id']] = true;
+      foreach ($version['assets'] as $asset) if ($asset['kind'] === 'image') $image_ids[$asset['id']] = true;
+    }
+    $current = $settings['current_version_id'] ?? null;
+    $cover = $settings['cover_asset_id'] ?? null;
+    $models = $settings ? json_decode($settings['interactive_models'], true, 512, JSON_THROW_ON_ERROR) : array();
+    if (isset($params['current_version_id'])) {
+      $current = $params['current_version_id'] === '' ? null : $params['current_version_id'];
+      if ($current !== null && (!is_string($current) || !isset($version_ids[$current]))) throw new YudaoDesignError('当前版本必须属于该项目。', 400);
+    }
+    if (isset($params['cover_asset_id'])) {
+      $cover = $params['cover_asset_id'] === '' ? null : $params['cover_asset_id'];
+      if ($cover !== null && (!is_string($cover) || !isset($image_ids[$cover]))) throw new YudaoDesignError('封面必须是该项目中的图片。', 400);
+    }
+    if (isset($params['interactive_models'])) $models = yudao_design_validate_models($params['interactive_models'], $version_ids);
+    $json = json_encode($models, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+    yudao_design_query('INSERT INTO '.yudao_design_table('project_settings').' (project_id,current_version_id,cover_asset_id,interactive_models) VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE current_version_id=VALUES(current_version_id),cover_asset_id=VALUES(cover_asset_id),interactive_models=VALUES(interactive_models)', 'ssss', array($project_id, $current, $cover, $json));
+    if (!$mysqli->commit()) throw new RuntimeException('Settings commit failed');
+  }
+  catch (Throwable $e) { $mysqli->rollback(); throw $e; }
+  $receipt = array('saved' => true, 'project_id' => $project_id, 'project' => null, 'warning' => null);
+  try { $receipt['project'] = yudao_design_get_project($project_id); }
+  catch (Throwable $e) {
+    error_log('Yudao design settings saved, detail unavailable: '.get_class($e));
+    $receipt['warning'] = '展示设置已保存，但项目详情暂时无法读取。请刷新项目页查看。';
+  }
+  return $receipt;
 }
 function yudao_design_text($value, $max, $required = false)
 {
@@ -186,7 +288,66 @@ function yudao_design_remove_directory($path)
     if (!$entry->isDot() && $entry->isFile()) unlink($entry->getPathname());
   rmdir($path);
 }
+function yudao_design_saved_receipt($project_id, $version_id)
+{
+  $receipt = array('saved' => true, 'project_id' => $project_id, 'version_id' => $version_id, 'project' => null, 'warning' => null);
+  try { $receipt['project'] = yudao_design_get_project($project_id); }
+  catch (Throwable $e) {
+    error_log('Yudao design saved, detail unavailable: '.get_class($e));
+    $receipt['warning'] = '资料已保存，但项目详情暂时无法读取。请刷新项目页查看，勿重复创建版本。';
+  }
+  return $receipt;
+}
+function yudao_design_import_fingerprint($params, $files)
+{
+  $input = array();
+  foreach (array('title' => 160, 'region' => 160, 'version' => 100, 'description' => 10000) as $key => $max)
+    $input[$key] = yudao_design_text($params[$key] ?? '', $max, in_array($key, array('title', 'version'), true));
+  $input['project_id'] = $params['project_id'] ?? '';
+  $input['manifest'] = $params['manifest'] ?? '[]';
+  $input['files'] = array();
+  foreach ($files['name'] ?? array() as $i => $name) {
+    $tmp = $files['tmp_name'][$i] ?? '';
+    if (($files['error'][$i] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK || !is_uploaded_file($tmp))
+      throw new YudaoDesignError('上传未完成，请重新提交相同文件后重试。', 400);
+    $input['files'][] = array('name' => $name, 'sha256' => hash_file('sha256', $tmp));
+  }
+  return hash('sha256', json_encode($input, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
+}
 function yudao_design_import($params, $files)
+{
+  $request_id = $params['request_id'] ?? '';
+  if ($request_id === '') return yudao_design_import_once($params, $files);
+  if (!yudao_design_valid_id($request_id)) throw new YudaoDesignError('上传请求编号必须是 UUID。', 400);
+  yudao_design_require_table('import_requests');
+  $fingerprint = yudao_design_import_fingerprint($params, $files);
+  $database = yudao_design_query('SELECT DATABASE() AS name')->get_result()->fetch_assoc();
+  $lock_name = 'yudao-import-'.hash('sha256', $database['name'].yudao_design_table('import_requests').$request_id);
+  // MariaDB limits named locks to 64 bytes; scope to this database and request.
+  $lock_name = substr($lock_name, 0, 64);
+  $locked = yudao_design_query('SELECT GET_LOCK(?,10) AS acquired', 's', array($lock_name))->get_result()->fetch_assoc();
+  if ((int)($locked['acquired'] ?? 0) !== 1) throw new YudaoDesignError('相同上传请求正在保存，请稍后使用原请求编号重试。', 409);
+  try {
+    $prior = yudao_design_query('SELECT fingerprint,receipt FROM '.yudao_design_table('import_requests').' WHERE request_id=?', 's', array($request_id))->get_result()->fetch_assoc();
+    if ($prior) {
+      if (!hash_equals($prior['fingerprint'], $fingerprint)) throw new YudaoDesignError('上传请求编号已用于其他内容，请为新上传使用新的 request_id。', 409);
+      return json_decode($prior['receipt'], true, 512, JSON_THROW_ON_ERROR);
+    }
+    $receipt = yudao_design_import_once($params, $files, $request_id, $fingerprint);
+    // IDs and saved=true were recorded atomically with the version. This optional
+    // enrichment cannot turn a committed upload into a reported failure.
+    try {
+      $json = json_encode($receipt, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+      yudao_design_query('UPDATE '.yudao_design_table('import_requests').' SET receipt=? WHERE request_id=?', 'ss', array($json, $request_id));
+    } catch (Throwable $e) { error_log('Yudao design receipt enrichment unavailable: '.get_class($e)); }
+    return $receipt;
+  }
+  finally {
+    try { yudao_design_query('SELECT RELEASE_LOCK(?)', 's', array($lock_name)); }
+    catch (Throwable $e) { error_log('Yudao design request lock release failed: '.get_class($e)); }
+  }
+}
+function yudao_design_import_once($params, $files, $request_id = '', $fingerprint = '')
 {
   $mysqli = yudao_design_connection();
   $title = yudao_design_text($params['title'], 160, true);
@@ -256,8 +417,18 @@ function yudao_design_import($params, $files)
     }
     if (yudao_design_query('SELECT id FROM '.yudao_design_table('versions').' WHERE project_id=? AND label=?', 'ss', array($project_id, $label))->get_result()->fetch_assoc())
       throw new YudaoDesignError('该版本已存在，请使用新的版本名称；旧资料会保留。', 409);
+    // Freeze the first version of a new project, or the pre-upload latest of an
+    // existing legacy project. Explicit settings are never changed by imports.
+    if (yudao_design_has_table('project_settings')) {
+      $previous = yudao_design_query('SELECT id FROM '.yudao_design_table('versions').' WHERE project_id=? ORDER BY created_at DESC,id LIMIT 1', 's', array($project_id))->get_result()->fetch_assoc();
+      yudao_design_query('INSERT IGNORE INTO '.yudao_design_table('project_settings').' (project_id,current_version_id,cover_asset_id,interactive_models) VALUES(?,?,NULL,?)', 'sss', array($project_id, $previous['id'] ?? $id, '[]'));
+    }
     if (!rename($stage, $final)) throw new RuntimeException('Publication move failed');
     yudao_design_query('INSERT INTO '.yudao_design_table('versions').' (id,project_id,label,created_at,document) VALUES(?,?,?,?,?)', 'sssss', array($id, $project_id, $label, $now, $document));
+    if ($request_id !== '') {
+      $initial_receipt = json_encode(array('saved' => true, 'project_id' => $project_id, 'version_id' => $id, 'project' => null, 'warning' => '资料已保存，请刷新项目页读取详情。'), JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+      yudao_design_query('INSERT INTO '.yudao_design_table('import_requests').' (request_id,fingerprint,project_id,version_id,receipt,created_at) VALUES(?,?,?,?,?,?)', 'ssssss', array($request_id, $fingerprint, $project_id, $id, $initial_receipt, $now));
+    }
     if (!$mysqli->commit()) throw new RuntimeException('Publication commit failed');
     $committed = true;
   }
@@ -268,5 +439,5 @@ function yudao_design_import($params, $files)
     }
     if (is_resource($lock)) { flock($lock, LOCK_UN); fclose($lock); }
   }
-  return yudao_design_get_project($project_id);
+  return yudao_design_saved_receipt($project_id, $id);
 }

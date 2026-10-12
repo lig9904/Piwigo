@@ -42,7 +42,7 @@ def import_version(base_url, username, password, manifest_path):
     status = request_json(opener, ws + '&method=pwg.session.getStatus')
     boundary = 'YudaoUpload' + uuid.uuid4().hex
     metadata = []
-    fields = {key: manifest.get(key, '') for key in ('title', 'region', 'version', 'description', 'project_id')}
+    fields = {key: manifest.get(key, '') for key in ('title', 'region', 'version', 'description', 'project_id', 'request_id')}
     fields['method'] = 'yudaoDesign.projects.import'
     fields['pwg_token'] = status['pwg_token']
     files = []
@@ -77,9 +77,18 @@ def import_version(base_url, username, password, manifest_path):
             result = json.load(response)
     if result.get('stat') != 'ok':
         raise RuntimeError(result.get('message', '保存失败'))
-    project = result['result']['project']
-    return {'project_id': project['id'], 'title': project['title'], 'versions': len(project['versions']),
-            'page_url': base_url.rstrip('/') + '/plugins/yudao_design/project.php?project=' + project['id']}
+    receipt = result['result']
+    project = receipt.get('project')
+    if not project and not (receipt.get('saved') is True and receipt.get('project_id') and receipt.get('version_id')):
+        raise RuntimeError('服务器未确认保存成功，请核查后重试')
+    project_id = receipt.get('project_id') or project['id']
+    page_url = base_url.rstrip('/') + '/plugins/yudao_design/project.php?project=' + project_id
+    if receipt.get('version_id'):
+        page_url += '&version=' + receipt['version_id']
+    return {'saved': True, 'project_id': project_id, 'version_id': receipt.get('version_id'),
+            'title': project['title'] if project else manifest['title'],
+            'versions': len(project['versions']) if project else None,
+            'warning': receipt.get('warning'), 'page_url': page_url}
 
 
 def main():
