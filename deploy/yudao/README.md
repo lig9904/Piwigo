@@ -8,6 +8,8 @@ Dockerfile 使用官方 PHP 8.3 Apache 多架构基础镜像，数据库使用�
 
 NAS 调试跳板部署使用 `compose.nas.yaml`，应用镜像名为 `yudao-piwigo:16.4-design`，端口为 `8081`。Piwigo 网页文件、MariaDB 数据和设计资料分别绑定到 `/vol1/1000/yudao-piwigo/html`、`/vol1/1000/yudao-piwigo/database` 和 `/vol2/1000/design-library/materials`。该配置固定 `linux/amd64`：先将基础镜像 tar 导入 NAS，并把源码 zip 解压到 `/vol1/1000/yudao-piwigo/source`，再在 NAS 准备 `.env` 凭证文件并运行 Compose，由 NAS 原生 Docker 构建应用镜像。XMT 目录只用于接收安装调试包，不用作网站或资料运行目录。
 
+更新已有飞牛项目时使用实际登记的 Compose 项目名。本机 NAS 项目登记为 `yudao-piwigo`，终端更新需显式传 `-p yudao-piwigo`，避免按配置文件默认名创建第二个项目并发生端口冲突。Dockerfile 专属忽略文件优先于根目录忽略文件，隔离测试和证据须在 `deploy/yudao/Dockerfile.dockerignore` 中排除。
+
 ## 准备密码并启动
 
 在仓库根目录执行。请将密码文件放在仓库以外，并为两个密码分别生成随机值：

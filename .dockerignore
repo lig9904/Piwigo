@@ -1,7 +1,0 @@
-.git
-evidence
-tools/yudao/tests
-**/__pycache__
-**/.DS_Store
-deploy/yudao/.env
-deploy/yudao/.runtime
