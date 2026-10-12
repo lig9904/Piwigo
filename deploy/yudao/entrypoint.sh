@@ -17,6 +17,10 @@ if [ -d "$source_dir/plugins/yudao_design" ]; then
     chown -R www-data:www-data "$web_root/plugins/yudao_design"
 fi
 
+# Publish the identity of the image supplying this plugin, not an editable source folder.
+cp /opt/yudao-release.json "$web_root/plugins/yudao_design/release.json"
+chown www-data:www-data "$web_root/plugins/yudao_design/release.json"
+
 mkdir -p "${YUDAO_STORAGE_ROOT:-/var/lib/yudao-design}"
 chown www-data:www-data "${YUDAO_STORAGE_ROOT:-/var/lib/yudao-design}"
 chmod 0750 "${YUDAO_STORAGE_ROOT:-/var/lib/yudao-design}"

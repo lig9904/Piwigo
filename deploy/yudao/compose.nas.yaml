@@ -20,7 +20,7 @@ services:
       start_period: 15s
 
   piwigo:
-    image: yudao-piwigo:16.4-design
+    image: ${YUDAO_IMAGE:-yudao-piwigo:16.4-design}
     platform: linux/amd64
     pull_policy: missing
     build:

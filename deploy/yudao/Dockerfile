@@ -25,6 +25,15 @@ RUN chmod 0755 /usr/local/bin/yudao-piwigo-entrypoint \
 
 COPY . /opt/piwigo/
 
+# Release identity changes must not invalidate the PHP extension build cache.
+ARG YUDAO_RELEASE=development
+ARG YUDAO_SOURCE_REVISION=unknown
+LABEL org.opencontainers.image.title="Piwigo 渔岛设计资料库" \
+      org.opencontainers.image.version=$YUDAO_RELEASE \
+      org.opencontainers.image.revision=$YUDAO_SOURCE_REVISION
+
+RUN printf '{"release":"%s","revision":"%s"}\n' "$YUDAO_RELEASE" "$YUDAO_SOURCE_REVISION" > /opt/yudao-release.json
+
 ENV YUDAO_STORAGE_ROOT=/var/lib/yudao-design
 VOLUME ["/var/www/html", "/var/lib/yudao-design"]
 

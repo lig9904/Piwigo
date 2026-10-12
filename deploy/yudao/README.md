@@ -49,3 +49,41 @@ docker --context colima-yudao-piwigo compose --env-file ../piwigo-runtime-eviden
 ```
 
 `down` 会停止并移除容器；命名卷保留。删除卷会永久删除相应图库或数据库，请在确认备份后单独操作。
+
+### 1.2 图片、比较和上传边界
+
+列表和图片卡使用最大边 400/800 的派生预览，原图灯箱及下载仍读取原附件。缓存保存在资料目录 `.previews/`，按原 SHA、尺寸和缓存格式版本分开，失败返回原图。可用 Web 用户预热：
+
+```sh
+docker exec -u www-data -w /var/www/html yudao-piwigo-piwigo-1 php plugins/yudao_design/thumbnail_warm.php
+```
+
+双图比较从本项目所有版本明确选择两张图，保留版本、现场/效果角色和原文件名；手机上下排列。管理员可补充最长 240 个 Unicode 码点的图片说明；说明存独立表，不改变原文件、版本文档或 SHA。接口 `POST yudaoDesign.projects.annotate` 接受 `project_id`、`captions` JSON 对象和 `pwg_token`；缺省资产保留，空串删除。保存回执沿用 `saved=true` 与可空 `project/warning`。
+
+`list/get` 和页面统一读 PHP 实际限额。CSV/TXT 不超过 16 MiB，通用单文件不超过 512 MiB，版本说明不超过 10,000 码点，至多 64 文件；总请求至多 1 GiB，附件总量扣除 2 MiB 表单开销，服务器较低时取较低值。发布时显式运行 schema，插件版本更新为 1.2.0。
+
+### 完整备份与隔离恢复
+
+以下脚本只针对上述项目，不操作其他 NAS 服务。备份会短暂停止此项目网页容器，数据库保持运行；网页恢复后继续镜像归档和恢复演练。数据库、网站配置/相册、原素材/互动模型、部署配置、源码、数据库初始化凭证和镜像都纳入备份；预览缓存可重建，因此排除。备份含密码，必须留在 NAS 的 root 0700 目录、文件 0600，不能上传 GitHub 或移入公开共享目录。
+
+```sh
+python3 tools/yudao/backup_restore.py /vol2/1000/design-library/backups/RELEASE-before --verify-restore
+python3 tools/yudao/backup_restore.py /vol2/1000/design-library/backups/RELEASE-before --restore-only
+```
+
+目标目录不能存在，且不能放入被备份的素材、网站或源码树中。恢复使用新建网络、容器和目录，端口仅绑定回环；核验数据库项目/版本/原文件信息、默认版本/封面/互动入口/说明，以及每个原文件的实际下载 SHA 和完整互动 HTML。演练结束清理本次创建的对象。`restore-only` 使用备份内的历史凭证，镜像缺失时从备份载入，不依赖正在运行的数据库。需要 Chrome 对模型操作/PDF渲染的验证须另行完成，脚本的 HTML/SHA 检查不能代替浏览器交互验收。
+
+备份与发布共用 `.backup.lock`，同时运行会拒绝；没有自动创建定时任务。当前备份位于同一 NAS，异地灾备尚未配置。
+
+### 可追踪发布与回滚
+
+每次发布使用新的镜像标签（如 `yudao-piwigo:1.2.0-REVISION`），先验证标签不存在，再构建；不能覆盖既有发布标签。构建传入实际提交和版本：
+
+```sh
+docker build --build-arg YUDAO_RELEASE=1.2.0 --build-arg YUDAO_SOURCE_REVISION=COMMIT -f deploy/yudao/Dockerfile -t yudao-piwigo:1.2.0-REVISION .
+python3 tools/yudao/switch_release.py yudao-piwigo:1.2.0-REVISION
+```
+
+OCI 标签记录提交和发布版本；`plugins/yudao_design/release.json` 显示实际提供插件的镜像身份。切换脚本只替换登记项目 `yudao-piwigo` 的应用镜像，保留端口、数据库、目录和其他服务；启动完成后运行增量 schema 并核对正在运行的镜像 ID。失败时恢复原 Compose，等待原 API 并核对镜像，写入 `rollbackVerified` 回执。凭证不写到回执。
+
+回滚使用相同脚本选择已保留旧镜像。1.2 新表是增量结构，旧插件仍可读原数据库；若未来涉及破坏性迁移，须先隔离验证备份恢复，不能直接套用代码回滚。Piwigo 核心文件仍保留持久卷里的原版本，更新镜像只更新此插件；核心版本升级须使用原生 Piwigo 升级流程并单独验收，不能把镜像标签当作核心已升级的证据。

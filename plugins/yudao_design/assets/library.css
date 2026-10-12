@@ -155,6 +155,29 @@
 #yudao-design-app .yd-image-card figcaption>span:first-child{width:100%}
 #yudao-design-app .yd-image-card figcaption>.yd-image-role{font-size:11px;color:var(--yd-muted);margin-right:auto;overflow:visible;width:auto}
 #yudao-design-app .yd-saved-link{display:inline-block;font-weight:600;text-decoration:underline;margin-left:6px}
+#yudao-design-app .yd-original-name{width:100%;color:var(--yd-muted);font-size:11px;overflow-wrap:anywhere}
+#yudao-design-app .yd-caption-editor{padding:0 14px 14px;font-size:12px}
+#yudao-design-app .yd-caption-editor summary{cursor:pointer;color:var(--yd-green)}
+#yudao-design-app .yd-caption-editor label{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+#yudao-design-app .yd-caption-editor input{width:100%;box-sizing:border-box;font-size:13px}
+#yudao-design-app .yd-caption-editor .yd-button{margin:10px 0;padding:6px 10px}
+#yudao-design-app .yd-caption-editor>small{display:block;color:var(--yd-muted)}
+#yudao-design-app [data-character-count]{font-size:11px;color:var(--yd-muted);font-weight:400}
+#yudao-design-app [data-character-count].yd-character-error{color:#934c36}
+#yudao-design-app .yd-comparison{border:1px solid var(--yd-line);border-radius:8px;padding:24px;background:#fff}
+#yudao-design-app .yd-compare-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}
+#yudao-design-app .yd-compare-side{min-width:0}
+#yudao-design-app .yd-compare-side>label{display:block;color:var(--yd-muted);font-size:12px;margin-bottom:12px}
+#yudao-design-app .yd-compare-side select{display:block;width:100%;margin-top:7px;font-size:13px}
+#yudao-design-app .yd-compare-card{border:1px solid var(--yd-line);border-radius:8px;overflow:hidden}
+#yudao-design-app .yd-compare-card>button{display:block;width:100%;position:relative;border:0;padding:0;background:#e6e9df;aspect-ratio:4/3;overflow:hidden}
+#yudao-design-app .yd-compare-card img{width:100%;height:100%;object-fit:contain;display:block}
+#yudao-design-app .yd-compare-card figcaption{padding:14px;display:flex;flex-direction:column;gap:7px;overflow-wrap:anywhere}
+#yudao-design-app .yd-compare-card figcaption strong{font-size:14px;font-weight:500}
+#yudao-design-app .yd-compare-card figcaption span,#yudao-design-app .yd-compare-card figcaption small{font-size:11px;color:var(--yd-muted)}
+#yudao-design-app .yd-compare-card figcaption p{font-size:12px;white-space:pre-wrap;color:var(--yd-muted)}
+#yudao-design-app .yd-compare-empty{border:1px dashed var(--yd-line);border-radius:8px;background:#f8faf4;padding:44px 18px;text-align:center;color:var(--yd-muted);font-size:13px}
+@media(max-width:680px){#yudao-design-app .yd-comparison{padding:18px}#yudao-design-app .yd-compare-grid{grid-template-columns:1fr;gap:24px}#yudao-design-app .yd-comparison .yd-section-heading p{line-height:1.6}#yudao-design-app .yd-caption-editor{padding:0 9px 12px}}
 #yudao-design-app .yd-section[id]{scroll-margin-top:24px}
 #yudao-design-app .yd-current-heading{border-top:1px solid var(--yd-line);padding-top:24px}
 @media(max-width:680px){#yudao-design-app .yd-project-resources{padding:18px}#yudao-design-app .yd-resource-nav,#yudao-design-app .yd-interactive-grid{grid-template-columns:1fr}#yudao-design-app .yd-version-actions .yd-button{white-space:normal;max-width:100%}#yudao-design-app .yd-model-shortcut{overflow-wrap:anywhere}#yudao-design-app .yd-interactive-card{padding:18px}#yudao-design-app .yd-file-heading .yd-meta{font-size:11px}}

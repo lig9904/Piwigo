@@ -21,9 +21,17 @@ function yudao_design_ini_bytes($value)
 }
 function yudao_design_limits()
 {
+  // Reserve multipart headers, 64 UTF-8 names + manifest, and 10,000 code points.
+  // A file total equal to post_max_size would otherwise be rejected by PHP.
+  $upload = yudao_design_ini_bytes(ini_get('upload_max_filesize'));
+  $post = yudao_design_ini_bytes(ini_get('post_max_size'));
+  $request = $post > 0 ? min(1073741824, $post) : 1073741824;
+  $file = $upload > 0 ? min(536870912, $upload) : 536870912;
+  $overhead = min(2097152, $request);
   return array('max_files' => min(64, max(1, (int)ini_get('max_file_uploads'))),
-    'max_file_bytes' => min(536870912, yudao_design_ini_bytes(ini_get('upload_max_filesize'))),
-    'max_total_bytes' => min(1073741824, yudao_design_ini_bytes(ini_get('post_max_size'))));
+    'max_file_bytes' => $file, 'per_extension_bytes' => array('csv' => min(16777216, $file), 'txt' => min(16777216, $file)),
+    'description_max_chars' => 10000, 'request_max_bytes' => $request,
+    'multipart_overhead_bytes' => $overhead, 'max_total_bytes' => max(0, $request - $overhead));
 }
 function yudao_design_table($name)
 {
@@ -59,6 +67,7 @@ function yudao_design_schema()
     'CREATE TABLE IF NOT EXISTS '.yudao_design_table('projects').' (id CHAR(36) PRIMARY KEY, title VARCHAR(160) NOT NULL, region VARCHAR(160) NOT NULL, created_at DATETIME(6) NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4',
     'CREATE TABLE IF NOT EXISTS '.yudao_design_table('versions').' (id CHAR(36) PRIMARY KEY, project_id CHAR(36) NOT NULL, label VARCHAR(100) NOT NULL, created_at DATETIME(6) NOT NULL, document LONGTEXT NOT NULL, UNIQUE KEY project_label(project_id,label), KEY project_created(project_id,created_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4',
     'CREATE TABLE IF NOT EXISTS '.yudao_design_table('project_settings').' (project_id CHAR(36) PRIMARY KEY, current_version_id CHAR(36) NULL, cover_asset_id CHAR(36) NULL, interactive_models LONGTEXT NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4',
+    'CREATE TABLE IF NOT EXISTS '.yudao_design_table('asset_captions').' (project_id CHAR(36) NOT NULL, asset_id CHAR(36) NOT NULL, caption VARCHAR(240) NOT NULL, PRIMARY KEY(project_id,asset_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4',
     'CREATE TABLE IF NOT EXISTS '.yudao_design_table('import_requests').' (request_id CHAR(36) PRIMARY KEY, fingerprint CHAR(64) NOT NULL, project_id CHAR(36) NOT NULL, version_id CHAR(36) NOT NULL, receipt LONGTEXT NOT NULL, created_at DATETIME(6) NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4',
     'ALTER TABLE '.yudao_design_table('projects').' MODIFY created_at DATETIME(6) NOT NULL',
     'ALTER TABLE '.yudao_design_table('versions').' MODIFY created_at DATETIME(6) NOT NULL',
@@ -96,12 +105,23 @@ function yudao_design_public_project($project)
   unset($project['_settings']);
   $project['current_version_id'] = $settings['current_version_id'] ?? ($project['versions'][0]['id'] ?? null);
   $project['cover_asset_id'] = $settings['cover_asset_id'] ?? null;
+  $captions = array();
+  if (yudao_design_has_table('asset_captions')) {
+    $rows = yudao_design_query('SELECT asset_id,caption FROM '.yudao_design_table('asset_captions').' WHERE project_id=?', 's', array($project['id']))->get_result();
+    while ($row = $rows->fetch_assoc()) $captions[$row['asset_id']] = $row['caption'];
+  }
   $project['interactive_models'] = $settings ? json_decode($settings['interactive_models'], true, 512, JSON_THROW_ON_ERROR) : array();
   foreach ($project['versions'] as &$version)
   {
     foreach ($version['assets'] as &$asset)
     {
       $asset['url'] = get_absolute_root_url().'plugins/yudao_design/file.php?version_id='.rawurlencode($version['id']).'&asset_id='.rawurlencode($asset['id']);
+      if ($asset['kind'] === 'image') {
+        $asset['caption'] = $captions[$asset['id']] ?? '';
+        $base = get_absolute_root_url().'plugins/yudao_design/thumbnail.php?version_id='.rawurlencode($version['id']).'&asset_id='.rawurlencode($asset['id']);
+        // Keys describe the maximum edge. Use 1x/2x, not width descriptors.
+        $asset['previews'] = array('400' => $base.'&size=400', '800' => $base.'&size=800');
+      }
       unset($asset['file'], $asset['mime']);
     }
     unset($asset);
@@ -209,6 +229,48 @@ function yudao_design_configure($params)
   }
   return $receipt;
 }
+function yudao_design_annotate($params)
+{
+  $project_id = $params['project_id'];
+  if (!yudao_design_valid_id($project_id)) throw new YudaoDesignError('项目编号无效。', 400);
+  yudao_design_require_table('asset_captions');
+  try { $captions = json_decode($params['captions'], false, 512, JSON_THROW_ON_ERROR); }
+  catch (Throwable $e) { throw new YudaoDesignError('图片说明必须是 JSON 对象。', 400); }
+  if (!($captions instanceof stdClass)) throw new YudaoDesignError('图片说明必须是 JSON 对象。', 400);
+  $mysqli = yudao_design_connection();
+  $mysqli->begin_transaction();
+  try {
+    if (!yudao_design_query('SELECT id FROM '.yudao_design_table('projects').' WHERE id=? FOR UPDATE', 's', array($project_id))->get_result()->fetch_assoc())
+      throw new YudaoDesignError('没有找到该项目。', 404);
+    $images = array();
+    $versions = yudao_design_query('SELECT document FROM '.yudao_design_table('versions').' WHERE project_id=?', 's', array($project_id))->get_result();
+    while ($row = $versions->fetch_assoc()) {
+      $version = json_decode($row['document'], true, 512, JSON_THROW_ON_ERROR);
+      foreach ($version['assets'] as $asset) if ($asset['kind'] === 'image') $images[$asset['id']] = true;
+    }
+    // Validate the entire patch before writing any captions.
+    $patch = array();
+    foreach ($captions as $asset_id => $caption) {
+      if (!yudao_design_valid_id($asset_id) || !isset($images[$asset_id])) throw new YudaoDesignError('图片说明只能保存到该项目中的图片。', 400);
+      if (!is_string($caption) || !mb_check_encoding($caption, 'UTF-8') || strpos($caption, "\0") !== false || mb_strlen($caption, 'UTF-8') > 240)
+        throw new YudaoDesignError('每张图片说明最多 240 个 Unicode 字符。', 400);
+      $patch[$asset_id] = $caption;
+    }
+    foreach ($patch as $asset_id => $caption) {
+      if ($caption === '') yudao_design_query('DELETE FROM '.yudao_design_table('asset_captions').' WHERE project_id=? AND asset_id=?', 'ss', array($project_id, $asset_id));
+      else yudao_design_query('INSERT INTO '.yudao_design_table('asset_captions').' (project_id,asset_id,caption) VALUES(?,?,?) ON DUPLICATE KEY UPDATE caption=VALUES(caption)', 'sss', array($project_id, $asset_id, $caption));
+    }
+    if (!$mysqli->commit()) throw new RuntimeException('Captions commit failed');
+  }
+  catch (Throwable $e) { $mysqli->rollback(); throw $e; }
+  $receipt = array('saved' => true, 'project_id' => $project_id, 'project' => null, 'warning' => null);
+  try { $receipt['project'] = yudao_design_get_project($project_id); }
+  catch (Throwable $e) {
+    error_log('Yudao captions saved, detail unavailable: '.get_class($e));
+    $receipt['warning'] = '图片说明已保存，但项目详情暂时无法读取。请刷新项目页查看。';
+  }
+  return $receipt;
+}
 function yudao_design_text($value, $max, $required = false)
 {
   if (!is_string($value) || !mb_check_encoding($value, 'UTF-8')) throw new YudaoDesignError('项目信息格式无效。', 400);
@@ -216,6 +278,31 @@ function yudao_design_text($value, $max, $required = false)
   if (($required && $value === '') || mb_strlen($value, 'UTF-8') > $max || strpos($value, "\0") !== false)
     throw new YudaoDesignError('请检查项目名称、版本或说明的长度。', 400);
   return $value;
+}
+function yudao_design_validate_upload_bytes($name, $bytes, $total, $limits = null)
+{
+  $limits = $limits ?? yudao_design_limits();
+  $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+  $max = $limits['per_extension_bytes'][$ext] ?? $limits['max_file_bytes'];
+  if (!$bytes) throw new YudaoDesignError($name.' 是空文件，请检查后重试。', 400);
+  if ($bytes > $max) throw new YudaoDesignError($name.' 单文件不能超过 '.round($max / 1048576, 2).' MiB'.(isset($limits['per_extension_bytes'][$ext]) ? '（'.strtoupper($ext).' 文本限制）' : '').'。', 413);
+  if ($total > $limits['max_total_bytes']) throw new YudaoDesignError('加入 '.$name.' 后文件总量超过 '.round($limits['max_total_bytes'] / 1048576, 2).' MiB；请减少文件或分成新的项目版本。', 413);
+}
+// Shared by original and preview endpoints: every request still resolves a
+// published version and checks its storage boundary, including cache hits.
+function yudao_design_resolve_asset($version_id, $asset_id)
+{
+  if (!yudao_design_valid_id($version_id) || !yudao_design_valid_id($asset_id)) throw new YudaoDesignError('文件编号无效。', 400);
+  $row = yudao_design_query('SELECT document FROM '.yudao_design_table('versions').' WHERE id=?', 's', array($version_id))->get_result()->fetch_assoc();
+  if (!$row) throw new YudaoDesignError('文件尚未发布或不存在。', 404);
+  $version = json_decode($row['document'], true, 512, JSON_THROW_ON_ERROR);
+  $asset = null;
+  foreach ($version['assets'] as $candidate) if ($candidate['id'] === $asset_id) $asset = $candidate;
+  if (!$asset || basename($asset['file']) !== $asset['file']) throw new YudaoDesignError('文件不存在。', 404);
+  $root = yudao_design_storage();
+  $path = realpath($root.'/'.$version_id.'/'.$asset['file']);
+  if (!$path || strpos($path, $root.'/'.$version_id.'/') !== 0 || !is_file($path)) throw new YudaoDesignError('原文件暂时不可读取。', 404);
+  return array($asset, $path);
 }
 function yudao_design_validate_file($path, $name)
 {
@@ -301,7 +388,7 @@ function yudao_design_saved_receipt($project_id, $version_id)
 function yudao_design_import_fingerprint($params, $files)
 {
   $input = array();
-  foreach (array('title' => 160, 'region' => 160, 'version' => 100, 'description' => 10000) as $key => $max)
+  foreach (array('title' => 160, 'region' => 160, 'version' => 100, 'description' => yudao_design_limits()['description_max_chars']) as $key => $max)
     $input[$key] = yudao_design_text($params[$key] ?? '', $max, in_array($key, array('title', 'version'), true));
   $input['project_id'] = $params['project_id'] ?? '';
   $input['manifest'] = $params['manifest'] ?? '[]';
@@ -353,7 +440,7 @@ function yudao_design_import_once($params, $files, $request_id = '', $fingerprin
   $title = yudao_design_text($params['title'], 160, true);
   $region = yudao_design_text($params['region'], 160);
   $label = yudao_design_text($params['version'], 100, true);
-  $description = yudao_design_text($params['description'], 10000);
+  $description = yudao_design_text($params['description'], yudao_design_limits()['description_max_chars']);
   $project_id = $params['project_id'] ?: yudao_design_id();
   $new_project = $params['project_id'] === '';
   if (!yudao_design_valid_id($project_id)) throw new YudaoDesignError('项目编号无效。', 400);
@@ -381,8 +468,7 @@ function yudao_design_import_once($params, $files, $request_id = '', $fingerprin
     if (($files['error'][$i] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK || !is_uploaded_file($tmp))
       throw new YudaoDesignError($name.' 上传未完成，请检查文件大小后重试。', 400);
     $bytes = filesize($tmp); $total += $bytes;
-    if (!$bytes || $bytes > $limits['max_file_bytes'] || $total > $limits['max_total_bytes'])
-      throw new YudaoDesignError('文件超过上传容量限制，请减少文件大小。', 413);
+    yudao_design_validate_upload_bytes($name, $bytes, $total, $limits);
     list($kind, $mime) = yudao_design_validate_file($tmp, $name);
     $id = yudao_design_id();
     $assets[] = array('id' => $id, 'name' => $name, 'kind' => $kind,
