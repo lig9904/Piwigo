@@ -1,0 +1,17 @@
+.git
+**/.git
+.env
+**/.env
+.env.*
+**/.env.*
+!.env.example
+!/deploy/yudao/.env.example
+local/config/database.inc.php
+**/local/config/database.inc.php
+_data
+**/_data
+work/piwigo-runtime-evidence
+evidence
+tools/yudao/tests
+**/__pycache__
+**/.DS_Store

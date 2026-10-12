@@ -1,0 +1,50 @@
+name: yudao-piwigo-nas
+
+services:
+  database:
+    image: mariadb:11.4
+    platform: linux/amd64
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: ${PIWIGO_DB_NAME:-piwigo}
+      MARIADB_USER: ${PIWIGO_DB_USER:-piwigo}
+      MARIADB_PASSWORD: ${PIWIGO_DB_PASSWORD:?Set PIWIGO_DB_PASSWORD in the env file}
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:?Set MARIADB_ROOT_PASSWORD in the env file}
+    volumes:
+      - /vol1/1000/yudao-piwigo/database:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+
+  piwigo:
+    image: yudao-piwigo:16.4-design
+    platform: linux/amd64
+    pull_policy: missing
+    build:
+      context: /vol1/1000/yudao-piwigo/source
+      dockerfile: deploy/yudao/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      database:
+        condition: service_healthy
+    environment:
+      YUDAO_STORAGE_ROOT: /var/lib/yudao-design
+    ports:
+      - "192.168.200.20:8081:80"
+      - "192.168.21.250:8081:80"
+    volumes:
+      - /vol1/1000/yudao-piwigo/html:/var/www/html
+      - /vol2/1000/design-library/materials:/var/lib/yudao-design
+    healthcheck:
+      test:
+        - CMD
+        - php
+        - -r
+        - '$$ctx=stream_context_create(["http"=>["timeout"=>5,"ignore_errors"=>true]]); @file_get_contents("http://127.0.0.1/install.php", false, $$ctx); $$status=$$http_response_header[0] ?? ""; exit(str_contains($$status, " 200 ") ? 0 : 1);'
+      interval: 10s
+      timeout: 7s
+      retries: 12
+      start_period: 20s
