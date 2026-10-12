@@ -1,0 +1,13 @@
+{
+  "title": "区域改造方案",
+  "region": "酒店区域",
+  "version": "R01",
+  "description": "方案说明及待核实事项。",
+  "files": [
+    {"path": "现场照片.jpg", "role": "source"},
+    {"path": "效果图.png", "role": "effect"},
+    {"path": "模型.glb", "role": "document"},
+    {"path": "图纸.pdf", "role": "document"},
+    {"path": "图纸.dwg", "role": "document"}
+  ]
+}

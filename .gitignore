@@ -2,6 +2,8 @@
 /_data
 /plugins/*
 !/plugins/index.php
+!/plugins/yudao_design/
+!/plugins/yudao_design/**
 /themes/*
 !/themes/index.php
 !/themes/default
@@ -17,6 +19,13 @@
 *.iml
 *.ipr
 *.iws
+
+# Local deployment credentials and runtime state
+/deploy/yudao/.env
+/deploy/yudao/.runtime/
+/evidence/
+/.DS_Store
+__pycache__/
 
 # Eclipse
 .settings
