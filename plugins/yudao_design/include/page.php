@@ -17,10 +17,10 @@ function yudao_design_page_markup($admin)
     'canUpload' => is_admin(), 'isLoggedIn' => yudao_design_logged_in(), 'loginUrl' => yudao_design_login_url(), 'token' => is_admin() ? get_pwg_token() : '', 'limits' => yudao_design_limits());
   $json = htmlspecialchars(json_encode($config, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), ENT_QUOTES, 'UTF-8');
   $assets = htmlspecialchars($base.'plugins/yudao_design/', ENT_QUOTES, 'UTF-8');
-  return '<link rel="stylesheet" href="'.$assets.'assets/library.css?v=1.3.0">'
+  return '<link rel="stylesheet" href="'.$assets.'assets/library.css?v=1.3.1">'
     .'<div id="yudao-design-app" data-config="'.$json.'"></div>'
     .'<script type="module" src="'.$assets.'vendor/model-viewer.min.js"></script>'
-    .'<script defer src="'.$assets.'assets/library.js?v=1.3.0"></script>';
+    .'<script defer src="'.$assets.'assets/library.js?v=1.3.1"></script>';
 }
 function yudao_design_render_page($admin)
 {
