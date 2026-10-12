@@ -128,6 +128,14 @@ function yudao_design_validate_file($path, $name)
     return array('image', image_type_to_mime_type($info[2]));
   }
   if ($ext === 'pdf' && substr($head, 0, 5) === '%PDF-') return array('pdf', 'application/pdf');
+  if (in_array($ext, array('csv', 'txt'), true))
+  {
+    if (filesize($path) > 16777216) throw new YudaoDesignError($name.' 文本文件不能超过 16 MB。', 400);
+    $text = file_get_contents($path);
+    if ($text === false || !mb_check_encoding($text, 'UTF-8') || strpos($text, "\0") !== false)
+      throw new YudaoDesignError($name.' 请保存为 UTF-8 文本格式。', 400);
+    return array('document', $ext === 'csv' ? 'text/csv; charset=utf-8' : 'text/plain; charset=utf-8');
+  }
   if ($ext === 'dwg' && preg_match('/\AAC10[0-9]{2}/', $head)) return array('cad', 'application/octet-stream');
   if ($ext === 'dxf' && (strpos($head, "AutoCAD Binary DXF\r\n\x1a\0") === 0 || preg_match('/(?:\A|\R)\s*0\s*\R\s*SECTION\s*\R/', $head)))
     return array('cad', 'application/octet-stream');
@@ -136,7 +144,7 @@ function yudao_design_validate_file($path, $name)
     yudao_design_validate_glb($path, $name);
     return array('model', 'model/gltf-binary');
   }
-  throw new YudaoDesignError($name.' 格式不支持或内容无效；支持 JPG、PNG、WebP、GLB、PDF、DWG、DXF。', 400);
+  throw new YudaoDesignError($name.' 格式不支持或内容无效；支持 JPG、PNG、WebP、GLB、PDF、DWG、DXF、CSV、TXT。', 400);
 }
 function yudao_design_validate_glb($path, $name)
 {

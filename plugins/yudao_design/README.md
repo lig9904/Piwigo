@@ -30,7 +30,7 @@
 文件先暂存、校验、写清单，再一起发布；失败不留下可浏览的半套项目。
 资料保留原文件字节与 SHA256。停用或卸载插件均保留业务资料，避免误删。
 
-支持 JPG/JPEG、PNG、WebP、GLB 2.0、PDF、DWG、DXF。
+支持 JPG/JPEG、PNG、WebP、GLB 2.0、PDF、DWG、DXF，以及 UTF-8 CSV/TXT（最多 16 MB）。表格与文字说明保留原件供下载。
 GLB 需要把贴图内嵌，首版以常规未压缩 GLB 为验收范围。
 DWG/DXF 原文件下载；浏览器中看 CAD 请同时上传对应 PDF。
 本模块不直接执行上传的 HTML，也不转换 SKP/BLEND 或重建原有模型交互脚本。

@@ -10,7 +10,7 @@ function yudao_design_page_markup($admin)
   return '<link rel="stylesheet" href="'.$assets.'assets/library.css?v=1.0.0">'
     .'<div id="yudao-design-app" data-config="'.$json.'"></div>'
     .'<script type="module" src="'.$assets.'vendor/model-viewer.min.js"></script>'
-    .'<script defer src="'.$assets.'assets/library.js?v=1.0.0"></script>';
+    .'<script defer src="'.$assets.'assets/library.js?v=1.0.1"></script>';
 }
 function yudao_design_render_page($admin)
 {

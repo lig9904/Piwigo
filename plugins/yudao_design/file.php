@@ -29,7 +29,7 @@ try {
     if ($start > $end || $start >= $size) { header('Content-Range: bytes */'.$size); http_response_code(416); exit; }
     http_response_code(206); header('Content-Range: bytes '.$start.'-'.$end.'/'.$size);
   }
-  $attachment = $asset['kind'] === 'cad' || isset($_GET['download']);
+  $attachment = in_array($asset['kind'], array('cad', 'document'), true) || isset($_GET['download']);
   header('Content-Type: '.$asset['mime']);
   header('X-Content-Type-Options: nosniff');
   header('Content-Disposition: '.($attachment ? 'attachment' : 'inline').'; filename="download.'.pathinfo($asset['file'], PATHINFO_EXTENSION).'"; filename*=UTF-8\'\''.rawurlencode($asset['name']));
